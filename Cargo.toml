@@ -1,0 +1,22 @@
+[package]
+name = "keenio_fetcher"
+version = "0.1.0"
+authors = ["Wu Young <doomsplayer@gmail.com>"]
+
+[dependencies]
+hyper = "0.6.14"
+chrono = "0.2.16"
+serde_json = "0.6.0"
+serde = "0.6.0"
+serde_macros = "0.5.3"
+redis = "*"
+url = "0.2.37"
+
+[lib]
+path = "src/lib.rs"
+name = "keen"
+crate-type = ["dylib"]
+
+[profile.release]
+debug = true
+lto = true
