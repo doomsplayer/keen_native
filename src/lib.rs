@@ -227,6 +227,7 @@ impl KeenOptions {
 
         let days = timeit!(day_iter(&data).map(|mut day| {
             day.value = day.value.into_iter().filter(|page| page.page_id() == page_id).collect();
+            println!("day.len {}", day.value.len());
             day
         }).filter_map(|day| {
             if day.timeframe.start.parse::<DateTime<UTC>>()
@@ -297,21 +298,22 @@ fn transform(data: Vec<Day>, aggregate: bool) -> Result<String, Box<Error>> {
         let mut kv = BTreeMap::new();
         for day in arr_of_day.iter() {
             for page in day.value.iter() {
-                println!("{:?}", page);
                 group = group.or_else(|| {Some(page.group_name())});
                 *kv.entry(page.group_value()).or_insert(0) += page.result();
             }
         };
 
-        let group = if let Some(group) = group {
-            group
-        } else {
-            return try!(Err(NativeError::new("cannot find group name")));
-        };
-
-        if kv.len() == 1 { // this means sum up'em all, no need to group by any group
+        if kv.len() == 0 {
+            Ok(try!(to_string(&Vec::<()>::new())))
+        } else if kv.len() == 1 { // this means sum up'em all, no need to group by any group
             Ok(try!(to_string(&kv.remove("").unwrap_or(0))))
         } else {
+            let group = if let Some(group) = group {
+                group
+            } else {
+                return try!(Err(NativeError::new("cannot find group name")));
+            };
+
             let mut arr: Vec<BTreeMap<&str, Value>> = kv.into_iter().map(|(name, value)| {
                 vec![("result", Value::U64(value)), (group, Value::String(name.into()))]
                     .into_iter().collect::<BTreeMap<_,_>>()
