@@ -25,7 +25,7 @@ use serde_json::from_str;
 use serde_json::{Value};
 use std::fmt::Display;
 use std::fmt::Formatter;
-
+const RESULT_LENGTH:usize = 30;
 macro_rules! timeit {
     ($e: expr, $f: expr, $t: expr) => {
         {
@@ -216,12 +216,20 @@ fn transform(data: Vec<Day>, group: Option<String>, aggregate: bool) -> Result<S
                     *kv.entry(group).or_insert(0) += result;
                 }
             };
-            let arr: Vec<_> = kv.into_iter().map(|(name, value)| {
+            let mut arr: Vec<_> = kv.into_iter().map(|(name, value)| {
                 let mut bt = BTreeMap::new();
                 bt.insert("result", Value::U64(value));
                 bt.insert(&group, Value::String(name));
                 bt
             }).collect();
+            arr.sort_by(|a, b| {
+                let a = a.get("result").map(|v| v.as_u64().unwrap_or(0)).unwrap_or(0);
+                let b = b.get("result").map(|v| v.as_u64().unwrap_or(0)).unwrap_or(0);
+                b.cmp(&a)
+            });
+            let l = if arr.len() > RESULT_LENGTH { RESULT_LENGTH } else { arr.len() };
+
+            let arr = &arr[0..l];
             Ok(try!(to_string(&arr)))
         }
         (true, None) => {
