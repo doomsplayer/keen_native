@@ -54,14 +54,57 @@ struct Day {
 }
 
 #[derive(Debug,Deserialize,Serialize)]
-struct Page {
-    result: u64,
-    #[serde(rename="pageId")]
-    page_id: usize,
-    #[serde(rename="normalized_referrer",default)]
-    referrer: Option<String>,
-    #[serde(rename="ip_geo_info.country",default)]
-    country: Option<String>
+enum Page {
+    BarePage {
+        result: u64,
+        #[serde(rename="pageId")]
+        page_id: usize,
+    },
+    ReffererPage {
+        result: u64,
+        #[serde(rename="pageId")]
+        page_id: usize,
+        #[serde(rename="normalized_referrer")]
+        referrer: Option<String>,
+    },
+    GeographyPage {
+        result: u64,
+        #[serde(rename="pageId")]
+        page_id: usize,
+        #[serde(rename="ip_geo_info.country")]
+        country: Option<String>
+    }
+}
+
+impl Page {
+    fn page_id(&self) -> usize {
+        match self {
+            &Page::GeographyPage {page_id, ..} => page_id,
+            &Page::ReffererPage {page_id, ..} => page_id,
+            &Page::BarePage {page_id, ..} => page_id
+        }
+    }
+    fn result(&self) -> u64 {
+        match self {
+            &Page::GeographyPage {result, ..} => result,
+            &Page::ReffererPage {result, ..} => result,
+            &Page::BarePage {result, ..} => result
+        }
+    }
+    fn group_name(&self) -> &'static str {
+        match self {
+            &Page::GeographyPage {..} => "ip_geo_info.country",
+            &Page::ReffererPage {..} => "normalized_referrer",
+            &Page::BarePage {..} => ""
+        }
+    }
+    fn group_value(&self) -> &str {
+        match self {
+            &Page::BarePage {..} => "",
+            &Page::ReffererPage {ref referrer, ..} => referrer.as_ref().map(|s| &s[..]).unwrap_or("null"),
+            &Page::GeographyPage {ref country, ..} => country.as_ref().map(|s| &s[..]).unwrap_or("null")
+        }
+    }
 }
 
 #[derive(Debug,Deserialize,Serialize)]
@@ -175,6 +218,7 @@ impl KeenOptions {
                     let ret = KeenResult{
                         result: pre_trim(iter).collect()
                     };
+
                     let s = to_string(&ret).unwrap();
                     let _ = timeit!(set_data_to_redis(&conn, &key, &s, expire), "set data to redis", debug);
                     s
@@ -184,7 +228,7 @@ impl KeenOptions {
         });
 
         let days = timeit!(day_iter(&data).map(|mut day| {
-            day.value = day.value.into_iter().filter(|page| page.page_id == page_id).collect();
+            day.value = day.value.into_iter().filter(|page| page.page_id() == page_id).collect();
             day
         }).filter_map(|day| {
             if day.timeframe.start.parse::<DateTime<UTC>>().map(|datetime| datetime >= from_date).unwrap_or(false) {
@@ -194,7 +238,7 @@ impl KeenOptions {
             }
         }).collect(), "filter", debug);
 
-        let result = try!(timeit!(transform(days, group, aggregate), "transform", debug));
+        let result = try!(timeit!(transform(days, aggregate), "transform", debug));
 
         Ok(result)
     }
@@ -210,52 +254,67 @@ fn day_iter<'a>(data: &'a str) -> Box<Iterator<Item=Day> + 'a> {
 fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::Iterator<Item=Day>, I: 'a {
     box days.map(|mut day| {
         day.value = day.value.into_iter()
-            .group_by(|p| p.page_id)
+            .group_by(|p| p.page_id())
             .flat_map(|(pid, mut records)| {
-                records.sort_by(|a,b| b.result.cmp(&a.result));
+                records.sort_by(|a,b| b.result().cmp(&a.result()));
 
                 let (less, more): (Vec<_>, Vec<_>) = records.into_iter().enumerate().partition(|&(idx, _)| idx < PRE_TRIM_NUM);
-                let country = less[0].1.country.as_ref().map(|_| "others".to_owned());
-                let referrer = less[0].1.referrer.as_ref().map(|_| "others".to_owned());
 
-                let result = more.into_iter().fold(0, |acc, e| acc + e.1.result);
+                let result = more.into_iter().fold(0, |acc, e| acc + e.1.result());
+
+                let others_page = match less[0].1 {
+                    Page::GeographyPage {..} => Page::GeographyPage {
+                        page_id: pid,
+                        country: Some("others".to_owned()),
+                        result: result
+                    },
+                    Page::ReffererPage {..} => Page::ReffererPage {
+                        page_id: pid,
+                        referrer: Some("others".to_owned()),
+                        result: result
+                    },
+                    Page::BarePage {..} => {
+                        println!("unreachable branch in pre-trim");
+                        Page::BarePage {
+                            page_id: pid,
+                            result: result
+                        }
+                    }
+                };
+
                 let mut less: Vec<_> = less.into_iter().map(|e| e.1).collect();
-                less.push(Page {
-                    page_id: pid,
-                    result: result,
-                    country: country,
-                    referrer: referrer
-                });
+                less.push(others_page);
                 less.into_iter()
             }).collect();
         day
     }) as Box<Iterator<Item=Day>>
 }
 
-fn transform(data: Vec<Day>, group: Option<String>, aggregate: bool) -> Result<String, Box<Error>> {
-    let arr_of_day = data.into_iter();
-    match (aggregate, group) {
-        (true, Some(group)) => {
-            let mut kv = BTreeMap::new();
-            for day in arr_of_day {
-                for page in day.value {
-                    let group = match &group[..] {
-                        "ip_geo_info.country" => page.country.unwrap_or("null".to_owned()),
-                        "normalized_referrer" => page.referrer.unwrap_or("null".to_owned()),
-                        g => {
-                            println!("unrecognized group: {}", g);
-                            "".to_owned()
-                        }
-                    };
-                    let result = page.result;
-                    *kv.entry(group).or_insert(0) += result;
-                }
-            };
-            let mut arr: Vec<_> = kv.into_iter().map(|(name, value)| {
-                let mut bt = BTreeMap::new();
-                bt.insert("result", Value::U64(value));
-                bt.insert(&group, Value::String(name));
-                bt
+fn transform(data: Vec<Day>, aggregate: bool) -> Result<String, Box<Error>> {
+    let arr_of_day = data;
+
+    if aggregate {
+        let group = None;
+        let mut kv = BTreeMap::new();
+        for day in arr_of_day.iter() {
+            for page in day.value.iter() {
+                group.or_else(|| {Some(page.group_name())});
+                *kv.entry(page.group_value()).or_insert(0) += page.result();
+            }
+        };
+
+        let group = if let Some(group) = group {
+            group
+        } else {
+            return try!(Err(NativeError::new("cannot find group name")));
+        };
+
+        if kv.len() == 1 { // this means sum up'em all, no need to group by any group
+            Ok(try!(to_string(&kv.remove("").unwrap_or(0))))
+        } else {
+            let mut arr: Vec<BTreeMap<&str, Value>> = kv.into_iter().map(|(name, value)| {
+                vec![("result", Value::U64(value)), (group, Value::String(name.into()))]
+                    .into_iter().collect::<BTreeMap<_,_>>()
             }).collect();
 
             // there's too many rows sometimes, for popular sites. reduce it when needed
@@ -264,54 +323,32 @@ fn transform(data: Vec<Day>, group: Option<String>, aggregate: bool) -> Result<S
                 let b = b.get("result").map(|v| v.as_u64().unwrap_or(0)).unwrap_or(0);
                 b.cmp(&a)
             });
+
             let l = if arr.len() > RESULT_LENGTH { RESULT_LENGTH } else { arr.len() };
             let arr = &arr[0..l];
-
             Ok(try!(to_string(&arr)))
         }
-        (true, None) => {
-            let mut result = 0;
-            for day in arr_of_day {
-                for page in day.value {
-                    result += page.result;
-                }
+    } else {
+        let arr: Vec<_> = arr_of_day.into_iter().map(|day| {
+            let mut bt = BTreeMap::new();
+            let time_bmap = vec![("start".to_owned(), Value::String(day.timeframe.start)), ("end".to_owned(), Value::String(day.timeframe.end))].into_iter().collect();
+            bt.insert("timeframe", Value::Object(time_bmap));
+
+            if day.value.len() == 0 {
+                bt.insert("value", Value::U64(0));
+            } else if day.value.len() == 1 {  // if value only contains 1 elem, flatten it
+                bt.insert("value", Value::U64(day.value[0].result()));
+            } else {
+                bt.insert("value", Value::Array(day.value.into_iter().map(|page| {
+                    let mut bt = BTreeMap::new();
+                    bt.insert("result".into(), Value::U64(page.result()));
+                    bt.insert(page.group_name().into(), Value::String(page.group_value().into()));
+                    Value::Object(bt)
+                }).collect()));
             }
-            Ok(try!(to_string(&result)))
-        }
-        (false, group) => {
-            let arr: Vec<_> = arr_of_day.map(|day| {
-                let mut bt = BTreeMap::new();
-                let time_bmap = vec![("start".to_owned(), Value::String(day.timeframe.start)), ("end".to_owned(), Value::String(day.timeframe.end))].into_iter().collect();
-                bt.insert("timeframe".to_owned(), Value::Object(time_bmap));
-
-                if day.value.len() == 0 {
-                    bt.insert("value".to_owned(), Value::U64(0));
-                } else if day.value.len() == 1 {  // if value only contains 1 elem, flatten it
-                    bt.insert("value".to_owned(), Value::U64(day.value[0].result));
-                } else {
-                    bt.insert("value".to_owned(), Value::Array(day.value.into_iter().map(
-                        |page| {
-                            let mut bt = BTreeMap::new();
-                            bt.insert("result".to_owned(), Value::U64(page.result));
-
-                            if let Some(ref group) = group {
-                                let s = match &group[..] {
-                                    "ip_geo_info.country" => page.country.unwrap_or("null".to_owned()),
-                                    "normalized_referrer" => page.referrer.unwrap_or("null".to_owned()),
-                                    g => {
-                                        println!("unrecognized group: {}", g);
-                                        "".to_owned()
-                                    }
-                                };
-                                bt.insert(group.clone(), Value::String(s));
-                            };
-                            Value::Object(bt)
-                    }).collect()));
-                }
-                bt
-            }).collect();
-            Ok(try!(to_string(&arr)))
-        }
+            bt
+        }).collect();
+        Ok(try!(to_string(&arr)))
     }
 }
 
