@@ -294,11 +294,11 @@ fn transform(data: Vec<Day>, aggregate: bool) -> Result<String, Box<Error>> {
     let arr_of_day = data;
 
     if aggregate {
-        let group = None;
+        let mut group = None;
         let mut kv = BTreeMap::new();
         for day in arr_of_day.iter() {
             for page in day.value.iter() {
-                group.or_else(|| {Some(page.group_name())});
+                group = group.or_else(|| {Some(page.group_name())});
                 *kv.entry(page.group_value()).or_insert(0) += page.result();
             }
         };
