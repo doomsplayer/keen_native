@@ -248,7 +248,7 @@ fn day_iter<'a>(data: &'a str) -> Box<Iterator<Item=Day> + 'a> {
     let to_split = data.trim_left_matches(r#"{"result": ["#).trim_right_matches(r#"]}"#);
     let elems = split_json_to_elem(to_split);
     box elems.into_iter()
-        .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| println!("deserialize fail: {}, {}", e, daystr)).ok()) as Box<Iterator<Item=Day>>
+        .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| println!("deserialize fail: {}", e)).ok()) as Box<Iterator<Item=Day>>
 }
 
 fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::Iterator<Item=Day>, I: 'a {
