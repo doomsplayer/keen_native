@@ -1,4 +1,4 @@
-#![feature(custom_derive, plugin,libc,box_patterns,custom_attribute)]
+#![feature(custom_derive, plugin,libc,box_patterns,custom_attribute,box_syntax)]
 #![plugin(serde_macros)]
 
 extern crate hyper;
@@ -8,7 +8,9 @@ extern crate serde;
 extern crate libc;
 extern crate redis;
 extern crate url;
+extern crate itertools;
 
+use itertools::Itertools;
 use redis::Commands;
 use redis::Connection;
 use url::Url;
@@ -25,7 +27,10 @@ use serde_json::from_str;
 use serde_json::{Value};
 use std::fmt::Display;
 use std::fmt::Formatter;
-const RESULT_LENGTH:usize = 30;
+
+const RESULT_LENGTH: usize = 30;
+const PRE_TRIM_NUM: usize = 30;
+
 macro_rules! timeit {
     ($e: expr, $f: expr, $t: expr) => {
         {
@@ -160,41 +165,71 @@ impl KeenOptions {
                     .map(|conn| if test_key_of_redis(&conn, &key) { (conn,key,true) } else { (conn,key,false) })
             });
 
-        let data = match conn {
+        let data = try!(match conn {
             Some((conn, key, true)) => {
                 timeit!(get_data_from_redis(&conn, &key), "get data from redis", debug)
             }
             Some((conn, key, false)) => {
                 timeit!(get_keen_raw_data(&url).map(|data| {
-                    let _ = timeit!(set_data_to_redis(&conn, &key, &data, expire), "set data to redis", debug);
-                    data
+                    let iter = day_iter(&data);
+                    let ret = KeenResult{
+                        result: pre_trim(iter).collect()
+                    };
+                    let s = to_string(&ret).unwrap();
+                    let _ = timeit!(set_data_to_redis(&conn, &key, &s, expire), "set data to redis", debug);
+                    s
                 }), "get && set data to redis", debug)
             }
             _ => timeit!(get_keen_raw_data(&url), "get keen raw data", debug)
-        };
+        });
 
-        let days = try!(timeit!(data.map(|data_string| {
-            let to_split = data_string.trim_left_matches(r#"{"result": ["#).trim_right_matches(r#"]}"#);
-            let elems = split_json_to_elem(to_split);
-            elems.into_iter()
-                .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| println!("deserialize fail: {}, {}", e, daystr)).ok())
-                .map(|mut day| {
-                    day.value = day.value.into_iter().filter(|page| page.page_id == page_id).collect();
-                    day
-                })
-                .filter_map(|day| {
-                    if day.timeframe.start.parse::<DateTime<UTC>>().map(|datetime| datetime >= from_date).unwrap_or(false) {
-                        Some(day)
-                    } else {
-                        None
-                    }
-                }).collect()
-        }), "filter", debug));
+        let days = timeit!(day_iter(&data).map(|mut day| {
+            day.value = day.value.into_iter().filter(|page| page.page_id == page_id).collect();
+            day
+        }).filter_map(|day| {
+            if day.timeframe.start.parse::<DateTime<UTC>>().map(|datetime| datetime >= from_date).unwrap_or(false) {
+                Some(day)
+            } else {
+                None
+            }
+        }).collect(), "filter", debug);
 
         let result = try!(timeit!(transform(days, group, aggregate), "transform", debug));
 
         Ok(result)
     }
+}
+
+fn day_iter<'a>(data: &'a str) -> Box<Iterator<Item=Day> + 'a> {
+    let to_split = data.trim_left_matches(r#"{"result": ["#).trim_right_matches(r#"]}"#);
+    let elems = split_json_to_elem(to_split);
+    box elems.into_iter()
+        .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| println!("deserialize fail: {}, {}", e, daystr)).ok()) as Box<Iterator<Item=Day>>
+}
+
+fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::Iterator<Item=Day>, I: 'a {
+    box days.map(|mut day| {
+        day.value = day.value.into_iter()
+            .group_by(|p| p.page_id)
+            .flat_map(|(pid, mut records)| {
+                records.sort_by(|a,b| b.result.cmp(&a.result));
+
+                let (less, more): (Vec<_>, Vec<_>) = records.into_iter().enumerate().partition(|&(idx, _)| idx < PRE_TRIM_NUM);
+                let country = less[0].1.country.as_ref().map(|_| "others".to_owned());
+                let referrer = less[0].1.referrer.as_ref().map(|_| "others".to_owned());
+
+                let result = more.into_iter().fold(0, |acc, e| acc + e.1.result);
+                let mut less: Vec<_> = less.into_iter().map(|e| e.1).collect();
+                less.push(Page {
+                    page_id: pid,
+                    result: result,
+                    country: country,
+                    referrer: referrer
+                });
+                less.into_iter()
+            }).collect();
+        day
+    }) as Box<Iterator<Item=Day>>
 }
 
 fn transform(data: Vec<Day>, group: Option<String>, aggregate: bool) -> Result<String, Box<Error>> {
@@ -222,14 +257,16 @@ fn transform(data: Vec<Day>, group: Option<String>, aggregate: bool) -> Result<S
                 bt.insert(&group, Value::String(name));
                 bt
             }).collect();
+
+            // there's too many rows sometimes, for popular sites. reduce it when needed
             arr.sort_by(|a, b| {
                 let a = a.get("result").map(|v| v.as_u64().unwrap_or(0)).unwrap_or(0);
                 let b = b.get("result").map(|v| v.as_u64().unwrap_or(0)).unwrap_or(0);
                 b.cmp(&a)
             });
             let l = if arr.len() > RESULT_LENGTH { RESULT_LENGTH } else { arr.len() };
-
             let arr = &arr[0..l];
+
             Ok(try!(to_string(&arr)))
         }
         (true, None) => {
@@ -247,7 +284,9 @@ fn transform(data: Vec<Day>, group: Option<String>, aggregate: bool) -> Result<S
                 let time_bmap = vec![("start".to_owned(), Value::String(day.timeframe.start)), ("end".to_owned(), Value::String(day.timeframe.end))].into_iter().collect();
                 bt.insert("timeframe".to_owned(), Value::Object(time_bmap));
 
-                if day.value.len() == 1 {  // if value only contains 1 elem, flatten it
+                if day.value.len() == 0 {
+                    bt.insert("value".to_owned(), Value::U64(0));
+                } else if day.value.len() == 1 {  // if value only contains 1 elem, flatten it
                     bt.insert("value".to_owned(), Value::U64(day.value[0].result));
                 } else {
                     bt.insert("value".to_owned(), Value::Array(day.value.into_iter().map(
