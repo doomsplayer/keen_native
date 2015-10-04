@@ -161,7 +161,6 @@ pub struct KeenOptions {
     page_id: usize,
     from_date: DateTime<UTC>,
     redis_conn: Option<String>,
-    group: Option<String>,
     aggregate: bool,
     debug: bool
 }
@@ -173,7 +172,6 @@ impl KeenOptions {
             page_id: page_id,
             from_date: time,
             redis_conn: None,
-            group: None,
             aggregate: false,
             debug: false
         }
@@ -181,7 +179,7 @@ impl KeenOptions {
 
     fn get_data(self) -> Result<String, Box<Error>> {
         let KeenOptions {
-            url, page_id, from_date, redis_conn, aggregate, debug, group
+            url, page_id, from_date, redis_conn, aggregate, debug
         } = self;
 
         let parsed_url = try!(Url::parse(&url));
@@ -231,11 +229,12 @@ impl KeenOptions {
             day.value = day.value.into_iter().filter(|page| page.page_id() == page_id).collect();
             day
         }).filter_map(|day| {
-            if day.timeframe.start.parse::<DateTime<UTC>>().map(|datetime| datetime >= from_date).unwrap_or(false) {
-                Some(day)
-            } else {
-                None
-            }
+            if day.timeframe.start.parse::<DateTime<UTC>>()
+                .map(|datetime| datetime >= from_date).unwrap_or(false) {
+                    Some(day)
+                } else {
+                    None
+                }
         }).collect(), "filter", debug);
 
         let result = try!(timeit!(transform(days, aggregate), "transform", debug));
@@ -298,6 +297,7 @@ fn transform(data: Vec<Day>, aggregate: bool) -> Result<String, Box<Error>> {
         let mut kv = BTreeMap::new();
         for day in arr_of_day.iter() {
             for page in day.value.iter() {
+                println!("{:?}", page);
                 group = group.or_else(|| {Some(page.group_name())});
                 *kv.entry(page.group_value()).or_insert(0) += page.result();
             }
@@ -442,17 +442,6 @@ pub extern "C" fn set_redis(options: *mut KeenOptions, conn: *const libc::c_char
 pub extern "C" fn set_debug(options: *mut KeenOptions, debug: bool) {
     let mut options = unsafe {Box::from_raw(options)};
     options.debug = debug;
-    let _ = Box::into_raw(options);
-}
-
-#[no_mangle]
-pub extern "C" fn set_group(options: *mut KeenOptions, agg: *const libc::c_char) {
-    let agg = unsafe {CStr::from_ptr(agg)};
-    let agg = agg.to_bytes();
-    let agg = unsafe {str::from_utf8_unchecked(agg)};
-
-    let mut options = unsafe {Box::from_raw(options)};
-    options.group = Some(agg.to_owned());
     let _ = Box::into_raw(options);
 }
 
