@@ -73,9 +73,6 @@ impl Deserialize for Page {
         use serde::de::Error;
         let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
         let result = try!(object.remove("result").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: result")));
-        if result == 0 {
-            println!("{:?}", object);
-        }
         let page_id = try!(object.remove("pageId").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: pageId")));
         let referrer = object.remove("normalized_referrer")
             .and_then(|f| f.as_string().map(|f| Group::Referrer(f.into())));
@@ -268,7 +265,7 @@ fn day_iter<'a>(data: &'a str) -> Box<Iterator<Item=Day> + 'a> {
 
 fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::Iterator<Item=Day>, I: 'a {
     box days.map(|mut day| {
-        day.value = day.value.into_iter()
+        day.value = day.value.into_iter().filter(|p| p.result != 0)
             .group_by(|p| p.page_id)
             .flat_map(|(pid, mut records)| {
                 if records.len() > 1 {
