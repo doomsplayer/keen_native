@@ -74,7 +74,6 @@ impl Deserialize for Page {
         let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
         let result = try!(object.remove("result").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: result")));
         let page_id = try!(object.remove("pageId").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: pageId")));
-        println!("{:?}", object);
         let referrer = object.remove("normalized_referrer")
             .and_then(|f| f.as_string().map(|f| Group::Referrer(f.into())));
         let country = object.remove("ip_geo_info.country")
