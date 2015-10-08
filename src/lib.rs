@@ -215,47 +215,51 @@ impl KeenOptions {
                     .map(|conn| if test_key_of_redis(&conn, &key) { (conn,key,true) } else { (conn,key,false) })
             });
 
-        let data = try!(match conn {
-            Some((conn, key, true)) => {
-                timeit!(get_data_from_redis(&conn, &key), "get data from redis", debug)
-            }
-            Some((conn, key, false)) => {
-                timeit!(get_keen_raw_data(&url).and_then(|data| {
+        let data = try! {
+            match conn {
+                Some((conn, key, true)) => {
+                    timeit!(get_data_from_redis(&conn, &key), "get data from redis", debug)
+                }
+                Some((conn, key, false)) => {
+                    timeit!(get_keen_raw_data(&url).and_then(|data| {
+                        if data.starts_with(r#"{"message":"#) {
+                            let err: KeenError = try!(from_str(&data));
+                            try!(Err(err));
+                        }
+
+                        let iter = day_iter(&data);
+                        let ret = KeenResult{
+                            result: pre_trim(iter).collect()
+                        };
+
+                        let s = to_string(&ret).unwrap();
+                        let _ = timeit!(set_data_to_redis(&conn, &key, &s, expire), "set data to redis", debug);
+                        Ok(s)
+                    }), "get && set data to redis", debug)
+                }
+                _ => timeit!(get_keen_raw_data(&url).and_then(|data| {
                     if data.starts_with(r#"{"message":"#) {
                         let err: KeenError = try!(from_str(&data));
                         try!(Err(err));
                     }
-
-                    let iter = day_iter(&data);
-                    let ret = KeenResult{
-                        result: pre_trim(iter).collect()
-                    };
-
-                    let s = to_string(&ret).unwrap();
-                    let _ = timeit!(set_data_to_redis(&conn, &key, &s, expire), "set data to redis", debug);
-                    Ok(s)
-                }), "get && set data to redis", debug)
+                    Ok(data)
+                }), "get keen raw data", debug)
             }
-            _ => timeit!(get_keen_raw_data(&url).and_then(|data| {
-                if data.starts_with(r#"{"message":"#) {
-                    let err: KeenError = try!(from_str(&data));
-                    try!(Err(err));
-                }
-                Ok(data)
-            }), "get keen raw data", debug)
-        });
+        };
 
-        let days = timeit!(day_iter(&data).map(|mut day| {
-            day.value = day.value.into_iter().filter(|page| page.page_id == page_id).collect();
-            day
-        }).filter_map(|day| {
-            if day.timeframe.start.parse::<DateTime<UTC>>()
-                .map(|datetime| datetime >= from_date).unwrap_or(false) {
+        let days = timeit! {
+            day_iter(&data).map(|mut day| {
+                day.value = day.value.into_iter().filter(|page| page.page_id == page_id).collect();
+                day
+            }).filter_map(|day| {
+                if day.timeframe.start.parse::<DateTime<UTC>>()
+                    .map(|datetime| datetime >= from_date).unwrap_or(false) {
                     Some(day)
-                } else {
-                    None
-                }
-        }).collect(), "filter", debug);
+                    } else {
+                        None
+                    }
+            }).collect(), "filter", debug
+        };
 
         let result = try!(timeit!(transform(days, aggregate), "transform", debug));
 
@@ -271,7 +275,7 @@ fn day_iter<'a>(data: &'a str) -> Box<Iterator<Item=Day> + 'a> {
 
     let elems = split_json_to_elem(to_split);
     box elems.into_iter()
-        .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| println!("deserialize fail: {}", e)).ok()) as Box<Iterator<Item=Day>>
+        .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| println!("deserialize fail: {}, {}", e, daystr)).ok()) as Box<Iterator<Item=Day>>
 }
 
 fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::Iterator<Item=Day>, I: 'a {
@@ -425,8 +429,9 @@ fn set_data_to_redis<'a>(conn: &'a Connection, key: &'a str, value: &str, timeou
 
 fn get_keen_raw_data(url: &str) -> Result<String, Box<Error>> {
     let mut resp = try!(Client::new().get(url).send());
-    let mut s = String::with_capacity(30 * 1024 * 1024);
-    let _ = resp.read_to_string(&mut s);
+    let mut s = Vec::with_capacity(30 * 1024 * 1024);
+    let _ = resp.read_to_end(&mut s);
+    let s = unsafe {String::from_utf8_unchecked(s)};
     Ok(s)
 }
 
