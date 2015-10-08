@@ -389,7 +389,11 @@ fn generate_redis_key(mut bt: BTreeMap<String,String>) -> Result<String,Box<Erro
     let interval: String = try!(bt.remove("interval").ok_or(NativeError::new("no such query in url: interval".to_owned())));
     let timeframe: String = try!(bt.remove("timeframe").ok_or(NativeError::new("no such query in url: timeframe".to_owned())));
     let filters: String = try!(bt.remove("filters").ok_or(NativeError::new("no such query in url: filters".to_owned())));
-    Ok(format!("{}.{}.{}.{}.{}", target_property, group_by, filters, interval, timeframe))
+    if interval == "daily"{
+        Ok(format!("{}.{}.{}.{}.{}", target_property, group_by, filters, interval, timeframe))
+    } else {
+        Ok(format!("{}.{}.{}.{}", target_property, group_by, filters, interval))
+    }
 }
 
 fn split_json_to_elem<'a>(json: &'a str) -> Vec<&'a str> {
