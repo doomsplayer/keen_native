@@ -249,21 +249,28 @@ impl KeenOptions {
             }
         };
 
+        let mut field = false;
+
         let days = timeit! {
             day_iter(&data).map(|mut day| {
-                day.value = day.value.into_iter().filter(|page| page.page_id == page_id).collect();
+                day.value = day.value.into_iter().filter(|page| {
+                    if page.group_name() != "" {
+                        field = true
+                    }
+                    page.page_id == page_id
+                }).collect();
                 day
             }).filter_map(|day| {
                 if day.timeframe.start.parse::<DateTime<UTC>>()
                     .map(|datetime| datetime >= from_date).unwrap_or(false) {
-                    Some(day)
+                        Some(day)
                     } else {
                         None
                     }
             }).collect(), "filter", debug
         };
 
-        let result = try!(timeit!(transform(days, aggregate), "transform", debug));
+        let result = try!(timeit!(transform(days, aggregate, field), "transform", debug));
 
         Ok(result)
     }
@@ -315,7 +322,7 @@ fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::I
     }) as Box<Iterator<Item=Day>>
 }
 
-fn transform(data: Vec<Day>, aggregate: bool) -> Result<String, Box<Error>> {
+fn transform(data: Vec<Day>, aggregate: bool, field: bool) -> Result<String, Box<Error>> {
     let arr_of_day = data;
 
     if aggregate {
@@ -323,14 +330,18 @@ fn transform(data: Vec<Day>, aggregate: bool) -> Result<String, Box<Error>> {
         let mut kv = BTreeMap::new();
         for day in arr_of_day.iter() {
             for page in day.value.iter() {
-                group = group.or_else(|| {Some(page.group_name())});
+                group = group.or(Some(page.group_name()));
                 *kv.entry(page.group_value()).or_insert(0) += page.result;
             }
         };
 
         if kv.len() == 0 {
-            Ok(try!(to_string(&Vec::<()>::new())))
-        } else if kv.len() == 1 { // this means sum up'em all, no need to group by any group
+            if field {
+                Ok(try!(to_string(&Vec::<()>::new())))
+            } else {
+                Ok(try!(to_string(&0)))
+            }
+        } else if kv.len() == 1 && kv.contains_key("") { // this means sum up'em all, no need to group by any group
             Ok(try!(to_string(&kv.remove("").unwrap_or(0))))
         } else {
             let group = if let Some(group) = group {

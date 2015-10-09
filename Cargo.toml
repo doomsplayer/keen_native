@@ -12,7 +12,6 @@ serde_macros = "0.5.3"
 redis = "*"
 url = "0.2.37"
 itertools = "0.4.0"
-aster = "0.4.9"
 
 [lib]
 path = "src/lib.rs"
