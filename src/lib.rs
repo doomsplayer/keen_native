@@ -192,6 +192,7 @@ impl KeenOptions {
         } = self;
 
         let parsed_url = try!(Url::parse(&url));
+        let unique = url.contains("count_unique");
 
         let mut query: BTreeMap<String,String> = parsed_url.query_pairs().unwrap_or(vec![]).into_iter().collect();
 
@@ -206,7 +207,7 @@ impl KeenOptions {
         });
 
         let conn = redis_conn
-            .and_then(|conn| generate_redis_key(query).ok().map(|key| (conn, key)))
+            .and_then(|conn| generate_redis_key(query,unique).ok().map(|key| (conn, key)))
             .and_then(|(conn, key)| {
                 if debug { println!("keen native: redis key: {}", key); }
                 redis::Client::open(&conn[..])
@@ -394,16 +395,18 @@ fn test_key_of_redis(conn: &Connection, key: &str) -> bool {
     conn.exists(key).unwrap_or(false)
 }
 
-fn generate_redis_key(mut bt: BTreeMap<String,String>) -> Result<String,Box<Error>> {
+fn generate_redis_key(mut bt: BTreeMap<String,String>, unique: bool) -> Result<String,Box<Error>> {
+    let unique = if unique { "count_unique" } else { "count" };
     let target_property: String = try!(bt.remove("target_property").ok_or(NativeError::new("no such query in url: target_property".to_owned())));
     let group_by: String = try!(bt.remove("group_by").ok_or(NativeError::new("no such query in url: group_by".to_owned())));
     let interval: String = try!(bt.remove("interval").ok_or(NativeError::new("no such query in url: interval".to_owned())));
     let timeframe: String = try!(bt.remove("timeframe").ok_or(NativeError::new("no such query in url: timeframe".to_owned())));
     let filters: String = try!(bt.remove("filters").ok_or(NativeError::new("no such query in url: filters".to_owned())));
+
     if interval == "daily"{
-        Ok(format!("{}.{}.{}.{}.{}", target_property, group_by, filters, interval, timeframe))
+        Ok(format!("{}.{}.{}.{}.{}.{}", unique, target_property, group_by, filters, interval, timeframe))
     } else {
-        Ok(format!("{}.{}.{}.{}", target_property, group_by, filters, interval))
+        Ok(format!("{}.{}.{}.{}.{}", unique, target_property, group_by, filters, interval))
     }
 }
 
