@@ -23,6 +23,9 @@ path = "src/lib.rs"
 name = "keen"
 crate-type = ["dylib", "rlib"]
 
+[[bin]]
+path = "src/main.rs"
+name = "keen"
 
 [profile.release]
 debug = true
