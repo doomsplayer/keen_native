@@ -175,7 +175,7 @@ pub struct KeenOptions {
 }
 
 impl KeenOptions {
-    fn new(url: &str, page_id: usize, time: DateTime<UTC>) -> KeenOptions {
+    pub fn new(url: &str, page_id: usize, time: DateTime<UTC>) -> KeenOptions {
         KeenOptions {
             url: url.to_owned(),
             page_id: page_id,
@@ -185,8 +185,17 @@ impl KeenOptions {
             debug: false
         }
     }
+    pub fn set_debug(&mut self, debug: bool) {
+        self.debug = debug;
+    }
+    pub fn set_aggregate(&mut self, aggregate: bool) {
+        self.aggregate = aggregate;
+    }
+    pub fn set_redis(&mut self, redis: &str) {
+        self.redis_conn = Some(redis.into());
+    }
 
-    fn get_data(self) -> Result<String, Box<Error>> {
+    pub fn get_data(self) -> Result<String, Box<Error>> {
         let KeenOptions {
             url, page_id, from_date, redis_conn, aggregate, debug
         } = self;
