@@ -10,6 +10,8 @@ extern crate redis;
 extern crate url;
 extern crate itertools;
 
+use std::io::Write;
+use std::io::stderr;
 use itertools::Itertools;
 use redis::Commands;
 use redis::Connection;
@@ -37,7 +39,7 @@ macro_rules! timeit {
         {
             let t = UTC::now();
             let result = $e;
-            if $t { println!("keen native: {} :{}", $f, UTC::now() - t)}
+            if $t { let _ = writeln!(stderr(), "keen native: {} :{}", $f, UTC::now() - t);}
             result
         }
     }
@@ -206,22 +208,22 @@ impl KeenOptions {
         let mut query: BTreeMap<String,String> = parsed_url.query_pairs().unwrap_or(vec![]).into_iter().collect();
 
         let expire = query.remove("max_age").or_else(|| {
-            if debug { println!("keen native: no max_age specific, use 300 as default") };
+            if debug { let _ = writeln!(stderr(), "keen native: no max_age specific, use 300 as default"); };
             None
         }).unwrap_or("300".to_owned()).parse().unwrap_or(300);
 
         let redis_conn = redis_conn.map(|r| {
-            if debug { println!("keen native: redis conn: {}", r); }
+            if debug { let _ = writeln!(stderr(), "keen native: redis conn: {}", r); }
             r
         });
 
         let conn = redis_conn
             .and_then(|conn| generate_redis_key(query,unique).ok().map(|key| (conn, key)))
             .and_then(|(conn, key)| {
-                if debug { println!("keen native: redis key: {}", key); }
+                if debug { let _ = writeln!(stderr(), "keen native: redis key: {}", key); }
                 redis::Client::open(&conn[..])
                     .and_then(|client| client.get_connection())
-                    .map_err(|e| println!("keen native: redis error: {}", e)).ok()
+                    .map_err(|e| writeln!(stderr(), "keen native: redis error: {}", e)).ok()
                     .map(|conn| if test_key_of_redis(&conn, &key) { (conn,key,true) } else { (conn,key,false) })
             });
 
@@ -294,7 +296,7 @@ fn day_iter<'a>(data: &'a str) -> Box<Iterator<Item=Day> + 'a> {
 
     let elems = split_json_to_elem(to_split);
     box elems.into_iter()
-        .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| println!("deserialize fail: {}, {}", e, daystr)).ok()) as Box<Iterator<Item=Day>>
+        .filter_map(|daystr| from_str::<Day>(daystr).map_err(|e| writeln!(stderr(), "deserialize fail: {}, {}", e, daystr)).ok()) as Box<Iterator<Item=Day>>
 }
 
 fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::Iterator<Item=Day>, I: 'a {
@@ -312,7 +314,7 @@ fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::I
                         Group::Country(_)   => Group::Country("others".into()),
                         Group::Referrer(_)  => Group::Referrer("others".into()),
                         Group::None         => {
-                            println!("unreachable branch: error! {:?}", less[0]);
+                            let _ = writeln!(stderr(), "unreachable branch: error! {:?}", less[0]);
                             Group::None
                         }
                     };

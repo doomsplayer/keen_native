@@ -12,7 +12,7 @@ docopt!(Args, "
 keen.
 
 Usage:
-  keen <url> <page_id> <from_date> [-r <redis>] [-d] [-a]
+  keen <url> <pageid> <fromdate> [-r <redis>] [-d] [-a]
   keen (-h | --help)
 
 Options:
@@ -24,12 +24,12 @@ Options:
 
 fn main() {
     let args: Args = Args::docopt().decode().unwrap_or_else(|e| e.exit());
-    let pid: usize = if let Ok(pid) = args.arg_page_id.parse() { pid } else {
-        println!(r#"{{"error": "cannot parse page_id: {}"}}"#, args.arg_page_id);
+    let pid: usize = if let Ok(pid) = args.arg_pageid.parse() { pid } else {
+        println!(r#"{{"error": "cannot parse page_id: {}"}}"#, args.arg_pageid);
         return;
     };
 
-    let time: DateTime<UTC> = match args.arg_from_date.parse() {
+    let time: DateTime<UTC> = match args.arg_fromdate.parse() {
         Ok(time) => time,
         Err(e) => {
             println!(r#"{{"error": "cannot parse datetime: {}"}}"#, e);
@@ -46,7 +46,7 @@ fn main() {
 
     match options.get_data() {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
-        Err(e) => println!("{:?}", e)
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 }
 
