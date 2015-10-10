@@ -4,8 +4,6 @@ version = "0.1.0"
 authors = ["Wu Young <doomsplayer@gmail.com>"]
 
 [dependencies]
-aster = "= 0.4.9"
-quasi = "= 0.3.2"
 hyper = "0.6.14"
 chrono = "0.2.16"
 serde_json = "0.6.0"
