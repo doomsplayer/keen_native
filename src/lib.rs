@@ -296,11 +296,6 @@ fn transform(data: Vec<Day>, field: Option<&str>) -> NativeResult<String> {
     }
 }
 
-
-fn test_key_of_redis(conn: &redis::Connection, key: &str) -> bool {
-    conn.exists(key).unwrap_or(false)
-}
-
 fn split_json_to_elem<'a>(json: &'a str) -> Vec<&'a str> {
     let mut count = 0;
     let mut new = true;
@@ -374,7 +369,7 @@ lazy_static! {
 
 const COLLECTION: &'static str = "strikingly_pageviews";
 
-pub fn cache_total_unique_page_view(from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
+pub fn cache_total_page_view(from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<&'static str> {
     let client = try!(generate_keen_client());
     let redis = try!(open_redis());
 
@@ -383,40 +378,11 @@ pub fn cache_total_unique_page_view(from: DateTime<UTC>, to: DateTime<UTC>) -> N
 
     let from_str = from.date().and_hms(0,0,0).to_rfc3339();
     let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+    let metric = if unique {"count_unique"} else {"count"};
 
-    let key = generate_redis_key("count_unique", None, &from_str, &to_str, None, None);
+    let key = generate_redis_key(metric, None, &from_str, &to_str, None, None);
 
-    let m = Metric::CountUnique("ip_address".into());
-    let t = TimeFrame::Absolute(from, to);
-    let c = COLLECTION.into();
-
-    let mut q = client.query(m, c, t);
-    q.add_filter(SPIDER_FILTER.clone());
-    q.add_group("pageId");
-
-    debug!("cache_total_unique_page_view: url: {}", q.url());
-
-    let mut resp = try!(timeit!(q.data(), "get data from keen io"));
-    let mut v = vec![];
-    let _ = resp.read_to_end(&mut v);
-    let s = unsafe {String::from_utf8_unchecked(v)};
-
-
-    let _: () = try!(redis.set(&key[..], s));
-    let _: () = try!(redis.expire(&key[..], timeout));
-    Ok("ok")
-}
-
-pub fn cache_total_page_view(from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
-    let client = try!(generate_keen_client());
-    let redis = try!(open_redis());
-
-    let timeout = if (to - from).num_days() > 1 {24 * 60 * 60} else {5 * 60};
-
-    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
-    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
-
-    let m = Metric::Count;
+    let m = if unique {Metric::CountUnique("ip_address".into())} else {Metric::Count};
     let t = TimeFrame::Absolute(from, to);
     let c = COLLECTION.into();
 
@@ -430,13 +396,14 @@ pub fn cache_total_page_view(from: DateTime<UTC>, to: DateTime<UTC>) -> NativeRe
     let mut v = vec![];
     let _ = resp.read_to_end(&mut v);
     let s = unsafe {String::from_utf8_unchecked(v)};
-    let key = generate_redis_key("count", None, &from_str, &to_str, None, None);
+
+
     let _: () = try!(redis.set(&key[..], s));
     let _: () = try!(redis.expire(&key[..], timeout));
     Ok("ok")
 }
 
-pub fn cache_unique_page_view(pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
+pub fn cache_page_view(pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<&'static str> {
     let client = try!(generate_keen_client());
     let redis = try!(open_redis());
 
@@ -444,9 +411,10 @@ pub fn cache_unique_page_view(pfrom: usize, pto: usize, from: DateTime<UTC>, to:
     let to_str = to.date().and_hms(0,0,0).to_rfc3339();
 
     let timeout = if (to - from).num_days() > 1 {24 * 60 * 60} else {5 * 60};
-    let key = generate_redis_key("count_unique", Some("pageId"), &from_str, &to_str, None, Some((pfrom, pto)));
+    let metric = if unique {"count_unique"} else {"count"};
+    let key = generate_redis_key(metric, Some("pageId"), &from_str, &to_str, None, Some((pfrom, pto)));
 
-    let m = Metric::CountUnique("ip_address".into());
+    let m = if unique {Metric::CountUnique("ip_address".into())} else {Metric::Count};
     let t = TimeFrame::Absolute(from, to);
     let c = COLLECTION.into();
 
@@ -457,7 +425,7 @@ pub fn cache_unique_page_view(pfrom: usize, pto: usize, from: DateTime<UTC>, to:
     q.add_filter(Filter::new("pageId", Operator::Gt, &format!("{}",pfrom)));
     q.add_filter(Filter::new("pageId", Operator::Lte, &format!("{}", pto)));
 
-    debug!("cache_unique_page_view: url: {}", q.url());
+    debug!("cache_page_view: url: {}", q.url());
 
     let mut resp = try!(timeit!(q.data(), "get data from keen io"));
     let mut v = vec![];
@@ -469,7 +437,7 @@ pub fn cache_unique_page_view(pfrom: usize, pto: usize, from: DateTime<UTC>, to:
     Ok("ok")
 }
 
-pub fn cache_with_field(pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
+pub fn cache_with_field(pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<&'static str> {
     let client = try!(generate_keen_client());
     let redis = try!(open_redis());
 
@@ -478,9 +446,10 @@ pub fn cache_with_field(pfrom: usize, pto: usize, field: &str, from: DateTime<UT
     let from_str = from.date().and_hms(0,0,0).to_rfc3339();
     let to_str = to.date().and_hms(0,0,0).to_rfc3339();
 
-    let key = generate_redis_key("count", Some(field), &from_str, &to_str, None, Some((pfrom, pto)));
+    let metric = if unique {"count_unique"} else {"count"};
+    let key = generate_redis_key(metric, Some(field), &from_str, &to_str, None, Some((pfrom, pto)));
 
-    let m = Metric::Count;
+    let m = if unique {Metric::CountUnique("ip_address".into())} else {Metric::Count};
     let t = TimeFrame::Absolute(from.clone(), to.clone());
     let c = COLLECTION.into();
 
@@ -508,12 +477,14 @@ pub fn cache_with_field(pfrom: usize, pto: usize, field: &str, from: DateTime<UT
     Ok("ok")
 }
 
-pub fn get_total_page_view(page_id: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<usize> {
+pub fn get_total_page_view(page_id: usize, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<usize> {
     let redis = try!(open_redis());
     let from_str = from.date().and_hms(0,0,0).to_rfc3339();
     let to_str = to.date().and_hms(0,0,0).to_rfc3339();
 
-    let key = generate_redis_key("count", None, &from_str, &to_str, None, None);
+    let metric = if unique {"count_unique"} else {"count"};
+    let key = generate_redis_key(metric, None, &from_str, &to_str, None, None);
+
     let s: String = try!(redis.get(&key[..]));
     let re = Regex::new(&format!(r#"\{{"pageId": {}, "result": (\d+)\}}"#, page_id)).unwrap();
     Ok(re.captures(&s).and_then(|g| {
@@ -521,13 +492,14 @@ pub fn get_total_page_view(page_id: usize, from: DateTime<UTC>, to: DateTime<UTC
     }).unwrap_or(0))
 }
 
-pub fn get_with_field(page_id: usize, pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<String> {
+pub fn get_with_field(page_id: usize, pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<String> {
     let redis = try!(open_redis());
 
     let from_str = from.date().and_hms(0,0,0).to_rfc3339();
     let to_str = to.date().and_hms(0,0,0).to_rfc3339();
 
-    let key = generate_redis_key("count", Some(field), &from_str, &to_str, None, Some((pfrom, pto)));
+    let metric = if unique {"count_unique"} else {"count"};
+    let key = generate_redis_key(metric, Some(field), &from_str, &to_str, None, Some((pfrom, pto)));
 
     let s: String = try!(redis.get(&key[..]));
 
@@ -540,16 +512,17 @@ pub fn get_with_field(page_id: usize, pfrom: usize, pto: usize, field: &str, fro
         }).collect(), "filter", true
     };
 
-    timeit!(transform(days, Some(field)), "transform", true)
+    timeit!(transform(days, Some(field)), "transform")
 }
 
-pub fn get_unique_page_view(page_id: usize, pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<String> {
+pub fn get_page_view(page_id: usize, pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<String> {
     let redis = try!(open_redis());
-
     let from_str = from.date().and_hms(0,0,0).to_rfc3339();
     let to_str = to.date().and_hms(0,0,0).to_rfc3339();
 
-    let key = generate_redis_key("count_unique", Some("pageId"), &from_str, &to_str, None, Some((pfrom, pto)));
+    let metric = if unique {"count_unique"} else {"count"};
+    let key = generate_redis_key(metric, Some("pageId"), &from_str, &to_str, None, Some((pfrom, pto)));
+
     let s: String = try!(redis.get(&key[..]));
 
     let days = timeit! {
@@ -558,24 +531,10 @@ pub fn get_unique_page_view(page_id: usize, pfrom: usize, pto: usize, from: Date
                 page.page_id == page_id
             }).collect();
             day
-        }).collect(), "filter", true
+        }).collect(), "filter"
     };
 
-    timeit!(transform(days, None), "transform", true)
-}
-
-pub fn get_total_unique_page_view(page_id: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<usize> {
-    let redis = try!(open_redis());
-
-    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
-    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
-
-    let key = generate_redis_key("count_unique", None, &from_str, &to_str, None, None);
-    let s: String = try!(redis.get(&key[..]));
-    let re = Regex::new(&format!(r#"\{{"pageId": {}, "result": (\d+)\}}"#, page_id)).unwrap();
-    Ok(re.captures(&s).and_then(|g| {
-        g.at(1).and_then(|d| d.parse().ok())
-    }).unwrap_or(0))
+    timeit!(transform(days, None), "transform")
 }
 
 // ffi bindings
@@ -615,7 +574,7 @@ fn make_result<D: Display>(r: D) -> *const libc::c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn cache_with_field_c(pfrom: libc::c_int, pto: libc::c_int, field: *const libc::c_char, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+pub extern "C" fn cache_with_field_c(pfrom: libc::c_int, pto: libc::c_int, field: *const libc::c_char, from: *const libc::c_char, to: *const libc::c_char, unique: bool) -> *const libc::c_char {
     let pfrom = pfrom as usize;
     let pto = pto as usize;
     let field = unsafe {CStr::from_ptr(field)};
@@ -624,11 +583,11 @@ pub extern "C" fn cache_with_field_c(pfrom: libc::c_int, pto: libc::c_int, field
 
     let from = returne! { parse_day(from) };
     let to = returne! { parse_day(to) };
-    returna! { cache_with_field(pfrom, pto, field, from, to) };
+    returna! { cache_with_field(pfrom, pto, field, from, to, unique) };
 }
 
 #[no_mangle]
-pub extern "C" fn get_with_field_c(page_id: libc::c_int, pfrom: libc::c_int, pto: libc::c_int, field: *const libc::c_char, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+pub extern "C" fn get_with_field_c(page_id: libc::c_int, pfrom: libc::c_int, pto: libc::c_int, field: *const libc::c_char, from: *const libc::c_char, to: *const libc::c_char, unique: bool) -> *const libc::c_char {
     let page_id = page_id as usize;
     let pfrom = pfrom as usize;
     let pto = pto as usize;
@@ -638,56 +597,41 @@ pub extern "C" fn get_with_field_c(page_id: libc::c_int, pfrom: libc::c_int, pto
 
     let from = returne! { parse_day(from) };
     let to = returne! { parse_day(to) };
-    returna! { get_with_field(page_id, pfrom, pto, field, from, to) };
+    returna! { get_with_field(page_id, pfrom, pto, field, from, to, unique) };
 }
 
 #[no_mangle]
-pub extern "C" fn cache_unique_page_view_c(pfrom: libc::c_int, pto: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+pub extern "C" fn cache_page_view_c(pfrom: libc::c_int, pto: libc::c_int, from: *const libc::c_char, to: *const libc::c_char, unique: bool) -> *const libc::c_char {
     let pfrom = pfrom as usize;
     let pto = pto as usize;
     let from = returne! { parse_day(from) };
     let to = returne! { parse_day(to) };
-    returna! { cache_unique_page_view(pfrom, pto, from, to) };
+    returna! { cache_page_view(pfrom, pto, from, to, unique) };
 }
 
 #[no_mangle]
-pub extern "C" fn get_unique_page_view_c(page_id: libc::c_int, pfrom: libc::c_int, pto: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+pub extern "C" fn get_page_view_c(page_id: libc::c_int, pfrom: libc::c_int, pto: libc::c_int, from: *const libc::c_char, to: *const libc::c_char, unique: bool) -> *const libc::c_char {
     let page_id = page_id as usize;
     let pfrom = pfrom as usize;
     let pto = pto as usize;
     let from = returne! { parse_day(from) };
     let to = returne! { parse_day(to) };
-    returna! { get_unique_page_view(page_id, pfrom, pto, from, to) };
+    returna! { get_page_view(page_id, pfrom, pto, from, to, unique) };
 }
 
 #[no_mangle]
-pub extern "C" fn cache_total_page_view_c(from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+pub extern "C" fn cache_total_page_view_c(from: *const libc::c_char, to: *const libc::c_char, unique: bool) -> *const libc::c_char {
     let from = returne! { parse_day(from) };
     let to = returne! { parse_day(to) };
-    returna! { cache_total_page_view(from, to) };
+    returna! { cache_total_page_view(from, to, unique) };
 }
 
 #[no_mangle]
-pub extern "C" fn get_total_page_view_c(page_id: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+pub extern "C" fn get_total_page_view_c(page_id: libc::c_int, from: *const libc::c_char, to: *const libc::c_char, unique: bool) -> *const libc::c_char {
     let page_id = page_id as usize;
     let from = returne! { parse_day(from) };
     let to = returne! { parse_day(to) };
-    returna! { get_total_page_view(page_id, from, to) };
-}
-
-#[no_mangle]
-pub extern "C" fn cache_total_unique_page_view_c(from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
-    let from = returne! { parse_day(from) };
-    let to = returne! { parse_day(to) };
-    returna! { cache_total_unique_page_view(from, to) };
-}
-
-#[no_mangle]
-pub extern "C" fn get_total_unique_page_view_c(page_id: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
-    let page_id = page_id as usize;
-    let from = returne! { parse_day(from) };
-    let to = returne! { parse_day(to) };
-    returna! { get_total_unique_page_view(page_id, from, to) };
+    returna! { get_total_page_view(page_id, from, to, unique) };
 }
 
 #[no_mangle]

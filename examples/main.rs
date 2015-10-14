@@ -21,7 +21,7 @@ Options:
 ", arg_page_id: usize);
 
 fn main() {
-    env_logger::init();
+    let _ = env_logger::init().unwrap();
     let args: Args = Args::docopt().decode().unwrap_or_else(|e| e.exit());
     let pid: usize = if let Ok(pid) = args.arg_pageid.parse() { pid } else {
         println!(r#"{{"error": "cannot parse page_id: {}"}}"#, args.arg_pageid);
@@ -31,36 +31,56 @@ fn main() {
     let from = UTC::now() - Duration::days(1);
     let to = UTC::now();
 
-    keen_native::cache_total_unique_page_view(from.clone(), to.clone()).unwrap();
-    keen_native::cache_total_page_view(from.clone(), to.clone()).unwrap();
-    keen_native::cache_unique_page_view(450000, 460000, from.clone(), to.clone()).unwrap();
-    keen_native::cache_with_field(450000, 460000, "ip_geo_info.country", from.clone(), to.clone()).unwrap();
-    keen_native::cache_with_field(450000, 460000, "normalized_referrer", from.clone(), to.clone()).unwrap();
+    keen_native::cache_total_page_view(from.clone(), to.clone(), true).unwrap();
+    keen_native::cache_total_page_view(from.clone(), to.clone(), false).unwrap();
+    keen_native::cache_page_view(450000, 460000, from.clone(), to.clone(), true).unwrap();
+    keen_native::cache_page_view(450000, 460000, from.clone(), to.clone(), false).unwrap();
+    keen_native::cache_with_field(450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true).unwrap();
+    keen_native::cache_with_field(450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false).unwrap();
+    keen_native::cache_with_field(450000, 460000, "normalized_referrer", from.clone(), to.clone(), true).unwrap();
+    keen_native::cache_with_field(450000, 460000, "normalized_referrer", from.clone(), to.clone(), false).unwrap();
 
-    match keen_native::get_total_unique_page_view(pid, from.clone(), to.clone()) {
+    match keen_native::get_total_page_view(pid, from.clone(), to.clone(), true) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_total_page_view(pid, from.clone(), to.clone()) {
+    match keen_native::get_total_page_view(pid, from.clone(), to.clone(), false) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_unique_page_view(pid, 450000, 460000, from.clone(), to.clone()) {
+    match keen_native::get_page_view(pid, 450000, 460000, from.clone(), to.clone(), true) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_with_field(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone()) {
+    match keen_native::get_page_view(pid, 450000, 460000, from.clone(), to.clone(), false) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_with_field(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone()) {
+    match keen_native::get_with_field(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
+
+    match keen_native::get_with_field(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
+
+    match keen_native::get_with_field(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), true) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
+
+    match keen_native::get_with_field(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), false) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
+
 }
+
 
 
