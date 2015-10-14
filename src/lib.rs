@@ -1,4 +1,4 @@
-#![feature(custom_derive, plugin,libc,box_patterns,custom_attribute,box_syntax)]
+#![feature(custom_derive, plugin,libc,box_patterns,custom_attribute,box_syntax,const_fn)]
 #![plugin(serde_macros)]
 
 extern crate hyper;
@@ -7,29 +7,32 @@ extern crate serde_json;
 extern crate serde;
 extern crate libc;
 extern crate redis;
-extern crate url;
 extern crate itertools;
+extern crate keen;
+extern crate regex;
+#[macro_use] extern crate wrapped_enum;
+#[macro_use] extern crate lazy_static;
+#[macro_use] extern crate log;
 
-use std::io::Write;
-use std::io::stderr;
-use itertools::Itertools;
-use redis::Commands;
-use redis::Connection;
-use url::Url;
-use std::error::Error;
-use std::str;
-use std::io::Read;
-use hyper::Client;
-use std::ffi::CStr;
-use std::ffi::CString;
+
+use keen::*;
 use chrono::*;
+
+use std::*;
+use std::io::{Write,Read,stderr};
+use std::borrow::{Borrow, Cow};
+use std::error::Error;
+use std::ffi::{CStr, CString};
 use std::collections::BTreeMap;
-use serde_json::to_string;
-use serde_json::from_str;
-use serde_json::{Value};
-use std::fmt::Display;
-use std::fmt::Formatter;
+use std::fmt::{Display, Formatter};
+
+use itertools::Itertools;
+
+use regex::Regex;
+use serde_json::{Value, to_string, from_str};
 use serde::{Deserialize, Deserializer, Serializer, Serialize};
+
+use redis::Commands;
 
 const RESULT_LENGTH: usize = 30;
 const PRE_TRIM_NUM: usize = 30;
@@ -39,10 +42,18 @@ macro_rules! timeit {
         {
             let t = UTC::now();
             let result = $e;
-            if $t { let _ = writeln!(stderr(), "keen native: {} :{}", $f, UTC::now() - t);}
+            if $t { info!("keen native: {} :{}", $f, UTC::now() - t) }
             result
         }
-    }
+    };
+    ($e: expr, $f: expr) => {
+        {
+            let t = UTC::now();
+            let result = $e;
+            info!("{} :{}", $f, UTC::now() - t);
+            result
+        }
+    };
 }
 
 #[derive(Debug,Deserialize,Serialize)]
@@ -142,151 +153,48 @@ impl Error for KeenError {
     }
 }
 
-#[derive(Debug,Deserialize,Serialize)]
-struct NativeError {
-    error: String
+wrapped_enum! {
+    #[derive(Debug)]
+    /// Error type of Keen Native library
+    pub enum NativeError {
+        /// native error for this library
+        NativeError(Cow<'static, str>),
+        /// json error
+        JsonError(serde_json::error::Error),
+        /// env error
+        EnvError(env::VarError),
+        /// redis error
+        RedisError(redis::RedisError),
+        /// hyper error
+        HttpError(hyper::error::Error),
+        /// chrono error
+        TimeError(chrono::ParseError)
+    }
 }
 
 impl Display for NativeError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
-        f.write_str(&format!("{}", self.error))
+        f.write_str(&format!("{:?}", self))
     }
 }
+
 
 impl Error for NativeError {
     fn description(&self) -> &str {
-        &self.error
-    }
-}
+        use NativeError::*;
 
-impl NativeError {
-    fn new<S:Into<String>>(s: S) -> NativeError {
-        NativeError {
-            error: s.into()
+        match self {
+            &NativeError(ref s) => s.borrow(),
+            &JsonError(ref s) => s.description(),
+            &EnvError(ref s) => s.description(),
+            &HttpError(ref s) => s.description(),
+            &RedisError(ref s) => s.description(),
+            &TimeError(ref s) => s.description(),
         }
     }
 }
 
-pub struct KeenOptions {
-    url: String,
-    page_id: usize,
-    from_date: DateTime<UTC>,
-    redis_conn: Option<String>,
-    aggregate: bool,
-    debug: bool
-}
-
-impl KeenOptions {
-    pub fn new(url: &str, page_id: usize, time: DateTime<UTC>) -> KeenOptions {
-        KeenOptions {
-            url: url.to_owned(),
-            page_id: page_id,
-            from_date: time,
-            redis_conn: None,
-            aggregate: false,
-            debug: false
-        }
-    }
-    pub fn set_debug(&mut self, debug: bool) {
-        self.debug = debug;
-    }
-    pub fn set_aggregate(&mut self, aggregate: bool) {
-        self.aggregate = aggregate;
-    }
-    pub fn set_redis(&mut self, redis: &str) {
-        self.redis_conn = Some(redis.into());
-    }
-
-    pub fn get_data(self) -> Result<String, Box<Error>> {
-        let KeenOptions {
-            url, page_id, from_date, redis_conn, aggregate, debug
-        } = self;
-
-        let parsed_url = try!(Url::parse(&url));
-        let unique = url.contains("count_unique");
-
-        let mut query: BTreeMap<String,String> = parsed_url.query_pairs().unwrap_or(vec![]).into_iter().collect();
-
-        let expire = query.remove("max_age").or_else(|| {
-            if debug { let _ = writeln!(stderr(), "keen native: no max_age specific, use 300 as default"); };
-            None
-        }).unwrap_or("300".to_owned()).parse().unwrap_or(300);
-
-        let redis_conn = redis_conn.map(|r| {
-            if debug { let _ = writeln!(stderr(), "keen native: redis conn: {}", r); }
-            r
-        });
-
-        let conn = redis_conn
-            .and_then(|conn| generate_redis_key(query,unique).ok().map(|key| (conn, key)))
-            .and_then(|(conn, key)| {
-                if debug { let _ = writeln!(stderr(), "keen native: redis key: {}", key); }
-                redis::Client::open(&conn[..])
-                    .and_then(|client| client.get_connection())
-                    .map_err(|e| writeln!(stderr(), "keen native: redis error: {}", e)).ok()
-                    .map(|conn| if test_key_of_redis(&conn, &key) { (conn,key,true) } else { (conn,key,false) })
-            });
-
-        let data = try! {
-            match conn {
-                Some((conn, key, true)) => {
-                    timeit!(get_data_from_redis(&conn, &key), "get data from redis", debug)
-                }
-                Some((conn, key, false)) => {
-                    timeit!{
-                        timeit!(get_keen_raw_data(&url), "get data from keen", debug).and_then(|data| {
-                            if data.starts_with(r#"{"message":"#) {
-                                let err: KeenError = try!(from_str(&data));
-                                try!(Err(err));
-                            }
-
-                            let iter = day_iter(&data);
-                            let ret = KeenResult{
-                                result: pre_trim(iter).collect()
-                            };
-
-                            let s = to_string(&ret).unwrap();
-                            let _ = timeit!(set_data_to_redis(&conn, &key, &s, expire), "set data to redis", debug);
-                            Ok(s)
-                        }), "get && set data to redis", debug
-                    }
-                }
-                _ => timeit!(get_keen_raw_data(&url).and_then(|data| {
-                    if data.starts_with(r#"{"message":"#) {
-                        let err: KeenError = try!(from_str(&data));
-                        try!(Err(err));
-                    }
-                    Ok(data)
-                }), "get keen raw data", debug)
-            }
-        };
-
-        let mut field = false;
-
-        let days = timeit! {
-            day_iter(&data).map(|mut day| {
-                day.value = day.value.into_iter().filter(|page| {
-                    if page.group_name() != "" {
-                        field = true
-                    }
-                    page.page_id == page_id
-                }).collect();
-                day
-            }).filter_map(|day| {
-                if day.timeframe.start.parse::<DateTime<UTC>>()
-                    .map(|datetime| datetime >= from_date).unwrap_or(false) {
-                        Some(day)
-                    } else {
-                        None
-                    }
-            }).collect(), "filter", debug
-        };
-
-        let result = try!(timeit!(transform(days, aggregate, field), "transform", debug));
-
-        Ok(result)
-    }
-}
+pub type NativeResult<T> = Result<T, NativeError>;
 
 fn day_iter<'a>(data: &'a str) -> Box<Iterator<Item=Day> + 'a> {
     let to_split = data
@@ -334,34 +242,20 @@ fn pre_trim<'a,I>(days: I) -> Box<Iterator<Item=Day> + 'a> where I: std::iter::I
     }) as Box<Iterator<Item=Day>>
 }
 
-fn transform(data: Vec<Day>, aggregate: bool, field: bool) -> Result<String, Box<Error>> {
+fn transform(data: Vec<Day>, field: Option<&str>) -> NativeResult<String> {
     let arr_of_day = data;
 
-    if aggregate {
-        let mut group = None;
+    if let Some(group) = field {
         let mut kv = BTreeMap::new();
         for day in arr_of_day.iter() {
             for page in day.value.iter() {
-                group = group.or(Some(page.group_name()));
                 *kv.entry(page.group_value()).or_insert(0) += page.result;
             }
         };
 
         if kv.len() == 0 {
-            if field {
-                Ok(try!(to_string(&Vec::<()>::new())))
-            } else {
-                Ok(try!(to_string(&0)))
-            }
-        } else if kv.len() == 1 && kv.contains_key("") { // this means sum up'em all, no need to group by any group
-            Ok(try!(to_string(&kv.remove("").unwrap_or(0))))
+            Ok(try!(to_string(&Vec::<()>::new())))
         } else {
-            let group = if let Some(group) = group {
-                group
-            } else {
-                return try!(Err(NativeError::new("cannot find group name")));
-            };
-
             let mut arr: Vec<BTreeMap<&str, Value>> = kv.into_iter().map(|(name, value)| {
                 vec![("result", Value::U64(value)), (group, Value::String(name.into()))]
                     .into_iter().collect::<BTreeMap<_,_>>()
@@ -402,23 +296,9 @@ fn transform(data: Vec<Day>, aggregate: bool, field: bool) -> Result<String, Box
     }
 }
 
-fn test_key_of_redis(conn: &Connection, key: &str) -> bool {
+
+fn test_key_of_redis(conn: &redis::Connection, key: &str) -> bool {
     conn.exists(key).unwrap_or(false)
-}
-
-fn generate_redis_key(mut bt: BTreeMap<String,String>, unique: bool) -> Result<String,Box<Error>> {
-    let unique = if unique { "count_unique" } else { "count" };
-    let target_property: String = try!(bt.remove("target_property").ok_or(NativeError::new("no such query in url: target_property".to_owned())));
-    let group_by: String = try!(bt.remove("group_by").ok_or(NativeError::new("no such query in url: group_by".to_owned())));
-    let interval: String = try!(bt.remove("interval").ok_or(NativeError::new("no such query in url: interval".to_owned())));
-    let timeframe: String = try!(bt.remove("timeframe").ok_or(NativeError::new("no such query in url: timeframe".to_owned())));
-    let filters: String = try!(bt.remove("filters").ok_or(NativeError::new("no such query in url: filters".to_owned())));
-
-    if interval == "daily"{
-        Ok(format!("{}.{}.{}.{}.{}.{}", unique, target_property, group_by, filters, interval, timeframe))
-    } else {
-        Ok(format!("{}.{}.{}.{}.{}", unique, target_property, group_by, filters, interval))
-    }
 }
 
 fn split_json_to_elem<'a>(json: &'a str) -> Vec<&'a str> {
@@ -447,78 +327,371 @@ fn split_json_to_elem<'a>(json: &'a str) -> Vec<&'a str> {
     vec
 }
 
-fn get_data_from_redis<'a>(conn: &'a Connection, key: &'a str) -> Result<String, Box<Error>> {
-    let result = try!(conn.get(key));
-    Ok(result)
+fn open_redis() -> NativeResult<redis::Connection> {
+    let c = try!(env::var("REDISCLOUD_URL"));
+    Ok(try!(redis::Client::open(&c[..]).and_then(|client| client.get_connection())))
 }
 
-fn set_data_to_redis<'a>(conn: &'a Connection, key: &'a str, value: &str, timeout: usize) -> Result<(), Box<Error>> {
-    let _: () = try!(conn.set(key, value));
-    let _: () = try!(conn.expire(key, timeout));
-    Ok(())
+fn generate_keen_client() -> NativeResult<KeenClient> {
+    let keen_project = try!(env::var("KEEN_IO_PROJECT_ID"));
+    let keen_read_key = try!(env::var("KEEN_READ_KEY"));
+
+    let client = KeenClient::new(&keen_read_key, &keen_project);
+    Ok(client)
 }
 
-fn get_keen_raw_data(url: &str) -> Result<String, Box<Error>> {
-    let mut resp = try!(Client::new().get(url).send());
-    let mut s = Vec::with_capacity(30 * 1024 * 1024);
-    let _ = resp.read_to_end(&mut s);
-    let s = unsafe {String::from_utf8_unchecked(s)};
-    Ok(s)
+fn generate_redis_key(metric: &str, target: Option<&str>, from: &str, to: &str, interval: Option<Interval>, bound: Option<(usize, usize)>) -> String {
+    let mut s = "".to_owned();
+
+    s.push_str(metric);
+
+    target.map(|c| {
+        s.push('.');
+        s.push_str(c);
+    });
+
+    interval.map(|c| {
+        s.push('.');
+        s.push_str(&format!("{}", c));
+    });
+
+    bound.map(|c| {
+        s.push('.');
+        s.push_str(&format!("{}~{}", c.0, c.1));
+    });
+
+    s.push('.');
+    s.push_str(from);
+    s.push('~');
+    s.push_str(to);
+
+    s
 }
 
-#[no_mangle]
-pub extern "C" fn new_options(url: *const libc::c_char, page_id: i32, after_day: *const libc::c_char) -> *const KeenOptions {
-    let url = unsafe {CStr::from_ptr(url)};
-    let url = url.to_bytes();
-    let url = unsafe {str::from_utf8_unchecked(url)};
-    let after_day = unsafe {CStr::from_ptr(after_day)};
-    let after_day = after_day.to_bytes();
-    let after_day = unsafe{str::from_utf8_unchecked(after_day)};
+lazy_static! {
+    static ref SPIDER_FILTER: Filter = Filter::new("parsed_user_agent.device.family", Operator::Ne, "Spider");
+}
 
-    let time: DateTime<UTC> = match after_day.parse() {
-        Ok(time) => time,
-        Err(e) => return CString::new(to_string(&NativeError::new(format!("{:?}", e))).unwrap()).unwrap().into_raw() as *mut _,
+const COLLECTION: &'static str = "strikingly_pageviews";
+
+pub fn cache_total_unique_page_view(from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
+    let client = try!(generate_keen_client());
+    let redis = try!(open_redis());
+
+    let timeout = if (to - from).num_days() > 1 {24 * 60 * 60} else {5 * 60};
+
+
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let key = generate_redis_key("count_unique", None, &from_str, &to_str, None, None);
+
+    let m = Metric::CountUnique("ip_address".into());
+    let t = TimeFrame::Absolute(from, to);
+    let c = COLLECTION.into();
+
+    let mut q = client.query(m, c, t);
+    q.add_filter(SPIDER_FILTER.clone());
+    q.add_group("pageId");
+
+    debug!("cache_total_unique_page_view: url: {}", q.url());
+
+    let mut resp = try!(timeit!(q.data(), "get data from keen io"));
+    let mut v = vec![];
+    let _ = resp.read_to_end(&mut v);
+    let s = unsafe {String::from_utf8_unchecked(v)};
+
+
+    let _: () = try!(redis.set(&key[..], s));
+    let _: () = try!(redis.expire(&key[..], timeout));
+    Ok("ok")
+}
+
+pub fn cache_total_page_view(from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
+    let client = try!(generate_keen_client());
+    let redis = try!(open_redis());
+
+    let timeout = if (to - from).num_days() > 1 {24 * 60 * 60} else {5 * 60};
+
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let m = Metric::Count;
+    let t = TimeFrame::Absolute(from, to);
+    let c = COLLECTION.into();
+
+    let mut q = client.query(m, c, t);
+    q.add_filter(SPIDER_FILTER.clone());
+    q.add_group("pageId");
+
+    debug!("cache_total_page_view: url: {}", q.url());
+
+    let mut resp = try!(timeit!(q.data(), "get data from keen io"));
+    let mut v = vec![];
+    let _ = resp.read_to_end(&mut v);
+    let s = unsafe {String::from_utf8_unchecked(v)};
+    let key = generate_redis_key("count", None, &from_str, &to_str, None, None);
+    let _: () = try!(redis.set(&key[..], s));
+    let _: () = try!(redis.expire(&key[..], timeout));
+    Ok("ok")
+}
+
+pub fn cache_unique_page_view(pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
+    let client = try!(generate_keen_client());
+    let redis = try!(open_redis());
+
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let timeout = if (to - from).num_days() > 1 {24 * 60 * 60} else {5 * 60};
+    let key = generate_redis_key("count_unique", Some("pageId"), &from_str, &to_str, None, Some((pfrom, pto)));
+
+    let m = Metric::CountUnique("ip_address".into());
+    let t = TimeFrame::Absolute(from, to);
+    let c = COLLECTION.into();
+
+    let mut q = client.query(m, c, t);
+    q.interval(Interval::Daily);
+    q.add_filter(SPIDER_FILTER.clone());
+    q.add_group("pageId");
+    q.add_filter(Filter::new("pageId", Operator::Gt, &format!("{}",pfrom)));
+    q.add_filter(Filter::new("pageId", Operator::Lte, &format!("{}", pto)));
+
+    debug!("cache_unique_page_view: url: {}", q.url());
+
+    let mut resp = try!(timeit!(q.data(), "get data from keen io"));
+    let mut v = vec![];
+    let _ = resp.read_to_end(&mut v);
+    let s = unsafe {String::from_utf8_unchecked(v)};
+
+    let _ = try!(redis.set(&key[..], s));
+    let _ = try!(redis.expire(&key[..], timeout));
+    Ok("ok")
+}
+
+pub fn cache_with_field(pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<&'static str> {
+    let client = try!(generate_keen_client());
+    let redis = try!(open_redis());
+
+    let timeout = if (to - from).num_days() > 1 {24 * 60 * 60} else {5 * 60};
+
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let key = generate_redis_key("count", Some(field), &from_str, &to_str, None, Some((pfrom, pto)));
+
+    let m = Metric::Count;
+    let t = TimeFrame::Absolute(from.clone(), to.clone());
+    let c = COLLECTION.into();
+
+    let mut q = client.query(m, c, t);
+    q.interval(Interval::Daily);
+    q.add_filter(SPIDER_FILTER.clone());
+    q.add_group("pageId");
+    q.add_group(field);
+    q.add_filter(Filter::new("pageId", Operator::Gt, &format!("{}", pfrom)));
+    q.add_filter(Filter::new("pageId", Operator::Lte, &format!("{}", pto)));
+
+    debug!("cache_with_field: url: {}", q.url());
+
+    let mut v = vec![];
+    let _ = try!(timeit!(q.data(), "get data from keen io")).read_to_end(&mut v);
+    let s = unsafe {String::from_utf8_unchecked(v)};
+
+    let ret = KeenResult {
+        result: pre_trim(day_iter(&s)).collect()
+    };
+    let s = to_string(&ret).unwrap();
+
+    let _ = try!(redis.set(&key[..], s));
+    let _ = try!(redis.expire(&key[..], timeout));
+    Ok("ok")
+}
+
+pub fn get_total_page_view(page_id: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<usize> {
+    let redis = try!(open_redis());
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let key = generate_redis_key("count", None, &from_str, &to_str, None, None);
+    let s: String = try!(redis.get(&key[..]));
+    let re = Regex::new(&format!(r#"\{{"pageId": {}, "result": (\d+)\}}"#, page_id)).unwrap();
+    Ok(re.captures(&s).and_then(|g| {
+        g.at(1).and_then(|d| d.parse().ok())
+    }).unwrap_or(0))
+}
+
+pub fn get_with_field(page_id: usize, pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<String> {
+    let redis = try!(open_redis());
+
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let key = generate_redis_key("count", Some(field), &from_str, &to_str, None, Some((pfrom, pto)));
+
+    let s: String = try!(redis.get(&key[..]));
+
+    let days = timeit! {
+        day_iter(&s).map(|mut day| {
+            day.value = day.value.into_iter().filter(|page| {
+                page.page_id == page_id
+            }).collect();
+            day
+        }).collect(), "filter", true
     };
 
-    let ret = Box::new(KeenOptions::new(url, page_id as usize, time));
-    Box::into_raw(ret)
+    timeit!(transform(days, Some(field)), "transform", true)
+}
+
+pub fn get_unique_page_view(page_id: usize, pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<String> {
+    let redis = try!(open_redis());
+
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let key = generate_redis_key("count_unique", Some("pageId"), &from_str, &to_str, None, Some((pfrom, pto)));
+    let s: String = try!(redis.get(&key[..]));
+
+    let days = timeit! {
+        day_iter(&s).map(|mut day| {
+            day.value = day.value.into_iter().filter(|page| {
+                page.page_id == page_id
+            }).collect();
+            day
+        }).collect(), "filter", true
+    };
+
+    timeit!(transform(days, None), "transform", true)
+}
+
+pub fn get_total_unique_page_view(page_id: usize, from: DateTime<UTC>, to: DateTime<UTC>) -> NativeResult<usize> {
+    let redis = try!(open_redis());
+
+    let from_str = from.date().and_hms(0,0,0).to_rfc3339();
+    let to_str = to.date().and_hms(0,0,0).to_rfc3339();
+
+    let key = generate_redis_key("count_unique", None, &from_str, &to_str, None, None);
+    let s: String = try!(redis.get(&key[..]));
+    let re = Regex::new(&format!(r#"\{{"pageId": {}, "result": (\d+)\}}"#, page_id)).unwrap();
+    Ok(re.captures(&s).and_then(|g| {
+        g.at(1).and_then(|d| d.parse().ok())
+    }).unwrap_or(0))
+}
+
+// ffi bindings
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+macro_rules! returna {
+    ($e: expr) => {
+        match $e {
+            Ok(o) => return make_result(o),
+            Err(e) => return make_error(e)
+        }
+    }
+}
+
+macro_rules! returne {
+    ($e: expr) => {
+        match $e {
+            Ok(o) => o,
+            Err(e) => return make_error(e)
+        }
+    }
+}
+
+fn parse_day(d: *const libc::c_char) -> NativeResult<DateTime<UTC>> {
+    let day = unsafe {CStr::from_ptr(d)};
+    let day = day.to_bytes();
+    let day = unsafe{str::from_utf8_unchecked(day)};
+    Ok(try!(day.parse()))
+}
+
+fn make_error<E: Display>(s: E) -> *const libc::c_char {
+    CString::new(format!(r#""error": {}"#, s)).unwrap().into_raw() as *const _
+}
+
+fn make_result<D: Display>(r: D) -> *const libc::c_char {
+    CString::new(format!(r#""result": {}"#, r)).unwrap().into_raw() as *const _
 }
 
 #[no_mangle]
-pub extern "C" fn set_redis(options: *mut KeenOptions, conn: *const libc::c_char) {
-    let conn = unsafe {CStr::from_ptr(conn)};
-    let conn = conn.to_bytes();
-    let conn = unsafe {str::from_utf8_unchecked(conn)};
+pub extern "C" fn cache_with_field_c(pfrom: libc::c_int, pto: libc::c_int, field: *const libc::c_char, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let pfrom = pfrom as usize;
+    let pto = pto as usize;
+    let field = unsafe {CStr::from_ptr(field)};
+    let field = field.to_bytes();
+    let field = unsafe{str::from_utf8_unchecked(field)};
 
-    let mut options = unsafe {Box::from_raw(options)};
-    options.redis_conn = Some(conn.to_owned());
-    let _ = Box::into_raw(options);
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { cache_with_field(pfrom, pto, field, from, to) };
 }
 
 #[no_mangle]
-pub extern "C" fn set_debug(options: *mut KeenOptions, debug: bool) {
-    let mut options = unsafe {Box::from_raw(options)};
-    options.debug = debug;
-    let _ = Box::into_raw(options);
+pub extern "C" fn get_with_field_c(page_id: libc::c_int, pfrom: libc::c_int, pto: libc::c_int, field: *const libc::c_char, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let page_id = page_id as usize;
+    let pfrom = pfrom as usize;
+    let pto = pto as usize;
+    let field = unsafe {CStr::from_ptr(field)};
+    let field = field.to_bytes();
+    let field = unsafe{str::from_utf8_unchecked(field)};
+
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { get_with_field(page_id, pfrom, pto, field, from, to) };
 }
 
 #[no_mangle]
-pub extern "C" fn set_aggregate(options: *mut KeenOptions) {
-    let mut options = unsafe {Box::from_raw(options)};
-    options.aggregate = true;
-    let _ = Box::into_raw(options);
+pub extern "C" fn cache_unique_page_view_c(pfrom: libc::c_int, pto: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let pfrom = pfrom as usize;
+    let pto = pto as usize;
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { cache_unique_page_view(pfrom, pto, from, to) };
+}
+
+#[no_mangle]
+pub extern "C" fn get_unique_page_view_c(page_id: libc::c_int, pfrom: libc::c_int, pto: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let page_id = page_id as usize;
+    let pfrom = pfrom as usize;
+    let pto = pto as usize;
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { get_unique_page_view(page_id, pfrom, pto, from, to) };
+}
+
+#[no_mangle]
+pub extern "C" fn cache_total_page_view_c(from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { cache_total_page_view(from, to) };
+}
+
+#[no_mangle]
+pub extern "C" fn get_total_page_view_c(page_id: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let page_id = page_id as usize;
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { get_total_page_view(page_id, from, to) };
+}
+
+#[no_mangle]
+pub extern "C" fn cache_total_unique_page_view_c(from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { cache_total_unique_page_view(from, to) };
+}
+
+#[no_mangle]
+pub extern "C" fn get_total_unique_page_view_c(page_id: libc::c_int, from: *const libc::c_char, to: *const libc::c_char) -> *const libc::c_char {
+    let page_id = page_id as usize;
+    let from = returne! { parse_day(from) };
+    let to = returne! { parse_day(to) };
+    returna! { get_total_unique_page_view(page_id, from, to) };
 }
 
 #[no_mangle]
 pub extern "C" fn dealloc_str(s: *mut libc::c_char) {
     unsafe {CString::from_raw(s)};
-}
 
-#[no_mangle]
-pub extern "C" fn get_data(options: *mut KeenOptions) -> *const libc::c_char {
-    let option = unsafe { Box::from_raw(options) };
-    match option.get_data() {
-        Ok(result) => CString::new(format!(r#"{{"result": {}}}"#, result)).unwrap().into_raw(),
-        Err(e) => CString::new(to_string(&NativeError::new(format!("{:?}", e))).unwrap()).unwrap().into_raw()
-    }
 }
