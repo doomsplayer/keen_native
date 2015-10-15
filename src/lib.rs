@@ -105,10 +105,11 @@ impl Deserialize for Page {
         let result = try!(object.remove("result").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: result")));
         let page_id = try!(object.remove("pageId").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: pageId")));
         let referrer = object.remove("normalized_referrer")
-            .and_then(|f| f.as_string().map(|f| Group::Referrer(f.into())));
+            .and_then(|f| f.as_string().or(f.as_null().map(|_| "null".into())).map(|f| Group::Referrer(f.into())));
         let country = object.remove("ip_geo_info.country")
-            .and_then(|f| f.as_string().map(|f| Group::Country(f.into())));
+            .and_then(|f| f.as_string().or(f.as_null().map(|_| "null".into())).map(|f| Group::Country(f.into())));
         let group = referrer.or(country).or(Some(Group::None)).unwrap();
+
         Ok(Page {
             result: result,
             page_id: page_id as usize,
@@ -319,7 +320,7 @@ pub fn cache_page_view_range(pfrom: usize, pto: usize, from: DateTime<UTC>, to: 
 
     let _ = try!(redis.set(&key[..], s));
     let _ = try!(redis.expire(&key[..], TIMEOUT));
-    Ok("ok")
+    Ok(r#""ok""#)
 }
 
 pub fn get_page_view_range(page_id: usize, pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool, interval: Option<Interval>) -> NativeResult<String> {
@@ -393,22 +394,24 @@ pub fn cache_with_field_range(pfrom: usize, pto: usize, field: &str, from: DateT
                 let (less, more): (Vec<_>, Vec<_>) = records.into_iter().enumerate().partition(|&(idx, _)| idx < PRE_TRIM_NUM);
 
                 let result = more.into_iter().fold(0, |acc, e| acc + e.1.result);
-
-                let others_group = match less[0].1.group {
-                    Group::Country(_)   => Group::Country("others".into()),
-                    Group::Referrer(_)  => Group::Referrer("others".into()),
-                    Group::None         => {
-                        let _ = writeln!(stderr(), "unreachable branch: error! {:?}", less[0]);
-                        Group::None
-                    }
-                };
-
                 let mut less: Vec<_> = less.into_iter().map(|e| e.1).collect();
-                less.push(Page {
-                    result: result,
-                    page_id: pid,
-                    group: others_group
-                });
+
+                if result != 0 {
+                    let others_group = match less[0].group {
+                        Group::Country(_)   => Group::Country("others".into()),
+                        Group::Referrer(_)  => Group::Referrer("others".into()),
+                        Group::None         => {
+                        let _ = writeln!(stderr(), "unreachable branch: error! {:?}, {:?}", less[0], less);
+                            Group::None
+                        }
+                    };
+
+                    less.push(Page {
+                        result: result,
+                        page_id: pid,
+                        group: others_group
+                    });
+                }
                 less.into_iter()
             } else {
                 records.into_iter()
@@ -419,7 +422,7 @@ pub fn cache_with_field_range(pfrom: usize, pto: usize, field: &str, from: DateT
     let s = to_string(&result).unwrap();
     let _ = try!(redis.set(&key[..], s));
     let _ = try!(redis.expire(&key[..], TIMEOUT));
-    Ok("ok")
+    Ok(r#""ok""#)
 }
 
 pub fn get_with_field_range(page_id: usize, pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<String> {
@@ -436,7 +439,7 @@ pub fn get_with_field_range(page_id: usize, pfrom: usize, pto: usize, field: &st
     let mut result: KeenResult = try!(from_str(&s));
 
     result.result.retain(|p| p.page_id == page_id);
-
+ 
     let s = to_string(&result.result).unwrap();
     Ok(Regex::new(&format!(r#","pageId":{}"#, page_id)).unwrap().replace_all(&s, ""))
 }
@@ -471,7 +474,8 @@ fn parse_day(d: *const libc::c_char) -> NativeResult<DateTime<UTC>> {
 }
 
 fn make_error<E: Display>(s: E) -> *const libc::c_char {
-    CString::new(format!(r#"{{"error": {}}}"#, s)).unwrap().into_raw() as *const _
+    let s = format!("{}", s).replace("\"", "'");
+    CString::new(format!(r#"{{"error": "{}"}}"#, s)).unwrap().into_raw() as *const _
 }
 
 fn make_result<D: Display>(r: D) -> *const libc::c_char {
