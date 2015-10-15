@@ -6,6 +6,8 @@ extern crate keen_native;
 extern crate docopt;
 extern crate chrono;
 extern crate env_logger;
+extern crate keen;
+use keen::*;
 use docopt::Docopt;
 use chrono::*;
 
@@ -31,51 +33,51 @@ fn main() {
     let from = UTC::now() - Duration::days(1);
     let to = UTC::now();
 
-    keen_native::cache_total_page_view(from.clone(), to.clone(), true).unwrap();
-    keen_native::cache_total_page_view(from.clone(), to.clone(), false).unwrap();
-    keen_native::cache_page_view(450000, 460000, from.clone(), to.clone(), true).unwrap();
-    keen_native::cache_page_view(450000, 460000, from.clone(), to.clone(), false).unwrap();
-    keen_native::cache_with_field(450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true).unwrap();
-    keen_native::cache_with_field(450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false).unwrap();
-    keen_native::cache_with_field(450000, 460000, "normalized_referrer", from.clone(), to.clone(), true).unwrap();
-    keen_native::cache_with_field(450000, 460000, "normalized_referrer", from.clone(), to.clone(), false).unwrap();
+    keen_native::cache_page_view_range(0, 1000000, from.clone(), to.clone(), true, None).unwrap();
+    keen_native::cache_page_view_range(0, 1000000, from.clone(), to.clone(), false, None).unwrap();
+    keen_native::cache_page_view_range(0, 1000000, from.clone(), to.clone(), true, Some(Interval::Daily)).unwrap();
+    keen_native::cache_page_view_range(450000, 460000, from.clone(), to.clone(), false, Some(Interval::Hourly)).unwrap();
+    keen_native::cache_with_field_range(450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true).unwrap();
+    keen_native::cache_with_field_range(450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false).unwrap();
+    keen_native::cache_with_field_range(450000, 460000, "normalized_referrer", from.clone(), to.clone(), true).unwrap();
+    keen_native::cache_with_field_range(450000, 460000, "normalized_referrer", from.clone(), to.clone(), false).unwrap();
 
-    match keen_native::get_total_page_view(pid, from.clone(), to.clone(), true) {
+    match keen_native::get_page_view_range(pid, 0, 1000000, from.clone(), to.clone(), true, None) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_total_page_view(pid, from.clone(), to.clone(), false) {
+    match keen_native::get_page_view_range(pid, 0, 1000000, from.clone(), to.clone(), false, None) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_page_view(pid, 450000, 460000, from.clone(), to.clone(), true) {
+    match keen_native::get_page_view_range(pid, 0, 1000000, from.clone(), to.clone(), true, Some(Interval::Daily)) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_page_view(pid, 450000, 460000, from.clone(), to.clone(), false) {
+    match keen_native::get_page_view_range(pid, 450000, 460000, from.clone(), to.clone(), false, Some(Interval::Hourly)) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_with_field(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true) {
+    match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_with_field(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false) {
+    match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_with_field(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), true) {
+    match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), true) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_with_field(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), false) {
+    match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), false) {
         Ok(result) => println!(r#"{{"result": {}}}"#, result),
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
