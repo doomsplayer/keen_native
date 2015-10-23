@@ -222,11 +222,14 @@ fn open_redis() -> NativeResult<redis::Connection> {
     Ok(try!(redis::Client::open(&c[..]).and_then(|client| client.get_connection())))
 }
 
+const TIMEOUT: usize = 90;
+
 fn generate_keen_client() -> NativeResult<KeenClient> {
     let keen_project = try!(env::var("KEEN_PROJECT_ID"));
     let keen_read_key = try!(env::var("KEEN_READ_KEY"));
 
-    let client = KeenClient::new(&keen_read_key, &keen_project);
+    let mut client = KeenClient::new(&keen_read_key, &keen_project);
+    client.timeout(time::Duration::from_secs(TIMEOUT as u64));
     Ok(client)
 }
 fn generate_interval(i: Option<&str>) -> Option<Interval> {
