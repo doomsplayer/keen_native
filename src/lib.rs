@@ -222,7 +222,7 @@ fn open_redis() -> NativeResult<redis::Connection> {
     Ok(try!(redis::Client::open(&c[..]).and_then(|client| client.get_connection())))
 }
 
-const TIMEOUT: usize = 90;
+const TIMEOUT: usize = 360;
 
 fn generate_keen_client() -> NativeResult<KeenClient> {
     let keen_project = try!(env::var("KEEN_PROJECT_ID"));
@@ -275,7 +275,7 @@ lazy_static! {
 }
 
 const COLLECTION: &'static str = "strikingly_pageviews";
-const TIMEOUT: usize = 48 * 60 * 60;
+const TTL: usize = 48 * 60 * 60;
 
 pub fn cache_page_view_range(pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool, interval: Option<Interval>) -> NativeResult<&'static str> {
     let client = try!(generate_keen_client());
@@ -322,7 +322,7 @@ pub fn cache_page_view_range(pfrom: usize, pto: usize, from: DateTime<UTC>, to: 
     }
 
     let _ = try!(redis.set(&key[..], s));
-    let _ = try!(redis.expire(&key[..], TIMEOUT));
+    let _ = try!(redis.expire(&key[..], TTL));
     Ok(r#""ok""#)
 }
 
@@ -424,7 +424,7 @@ pub fn cache_with_field_range(pfrom: usize, pto: usize, field: &str, from: DateT
 
     let s = to_string(&result).unwrap();
     let _ = try!(redis.set(&key[..], s));
-    let _ = try!(redis.expire(&key[..], TIMEOUT));
+    let _ = try!(redis.expire(&key[..], TTL));
     Ok(r#""ok""#)
 }
 
