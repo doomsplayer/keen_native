@@ -53,37 +53,37 @@ fn main() {
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-//     match keen_native::get_page_view_range(pid, 0, 1000000, from.clone(), to.clone(), true, Some(Interval::Daily)) {
-//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
-//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-//     }
+    match keen_native::get_page_view_range(pid, 0, 1000000, from.clone(), to.clone(), true, Some(Interval::Daily)) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
 
-//     match keen_native::get_page_view_range(pid, 450000, 460000, from.clone(), to.clone(), false, Some(Interval::Hourly)) {
-//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
-//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-//     }
+    match keen_native::get_page_view_range(pid, 450000, 460000, from.clone(), to.clone(), false, Some(Interval::Hourly)) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
 
-//     match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true) {
-//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
-//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-//     }
+    match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
 
-//     match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false) {
-//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
-//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-//     }
+    match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
 
-//     match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), true) {
-//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
-//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-//     }
+    match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), true) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
 
-//     match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), false) {
-//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
-//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-//     }
+    match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), false) {
+        Ok(result) => println!(r#"{{"result": {}}}"#, result),
+        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+    }
 
-// }
+}
 
 
 
