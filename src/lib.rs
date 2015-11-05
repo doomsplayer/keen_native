@@ -29,7 +29,6 @@ use itertools::Itertools;
 use regex::Regex;
 use serde_json::{Value, to_string, from_str, from_reader, from_value, to_value};
 use serde::{Deserialize, Deserializer, Serializer, Serialize};
-use serde::{de,ser};
 
 use redis::Commands;
 
@@ -66,21 +65,25 @@ macro_rules! timeit {
 }
 
 #[derive(Debug)]
-struct KeenResultIntervalMV {
-    result: Vec<DayMV>
+struct KeenResult<C> {
+    result: Vec<C>
 }
 
-
-impl Deserialize for KeenResultIntervalMV {
-    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResultIntervalMV, D::Error> where D: Deserializer {
-        let mut bt: BTreeMap<String, Vec<DayMV>> = try!(BTreeMap::deserialize(deserializer));
-        Ok(KeenResultIntervalMV {
-            result: bt.remove("result").unwrap()
-        })
+impl<C> Deserialize for KeenResult<C> where C: Deserialize {
+    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResult<C>, D::Error> where D: Deserializer {
+        use serde::de::Error;
+        let mut bt: BTreeMap<String, Vec<C>> = try!(BTreeMap::deserialize(deserializer));
+        if let Some(result) = bt.remove("result") {
+            Ok(KeenResult {
+                result: result
+            })
+        } else {
+            Err(D::Error::missing_field("result"))
+        }
     }
 }
 
-impl Serialize for KeenResultIntervalMV {
+impl<C> Serialize for KeenResult<C> where C: Serialize {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
         use serde::ser::impls::MapIteratorVisitor;
         serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(), Some(1)))
@@ -88,97 +91,26 @@ impl Serialize for KeenResultIntervalMV {
 }
 
 #[derive(Debug)]
-struct KeenResultIntervalSV {
-    result: Vec<DaySV>
-}
-
-impl Serialize for KeenResultIntervalSV {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
-        use serde::ser::impls::MapIteratorVisitor;
-        serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(), Some(1)))
-    }
-}
-
-impl Deserialize for KeenResultIntervalSV {
-    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResultIntervalSV, D::Error> where D: Deserializer {
-        let mut bt: BTreeMap<String, Vec<DaySV>> = try!(BTreeMap::deserialize(deserializer));
-        Ok(KeenResultIntervalSV {
-            result: bt.remove("result").unwrap()
-        })
-    }
-}
-
-#[derive(Debug)]
-struct KeenResult {
-    result: Vec<Page>
-}
-
-impl Deserialize for KeenResult {
-    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResult, D::Error> where D: Deserializer {
-        let mut bt: BTreeMap<String, Vec<Page>> = try!(BTreeMap::deserialize(deserializer));
-        Ok(KeenResult {
-            result: bt.remove("result").unwrap()
-        })
-    }
-}
-
-impl Serialize for KeenResult {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
-        use serde::ser::impls::MapIteratorVisitor;
-        serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(), Some(1)))
-    }
-}
-
-#[derive(Debug)]
-struct DaySV {
-    value: usize,
+struct Day<V> {
+    value: V,
     timeframe: Timeframe
 }
 
-impl Deserialize for DaySV {
-    fn deserialize<D>(deserializer: &mut D) -> Result<DaySV, D::Error> where D: Deserializer {
+impl<V> Deserialize for Day<V> where V: Deserialize {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Day<V>, D::Error> where D: Deserializer {
         use serde::de::Error;
         let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
         let value = get_field!(object, "value");
         let timeframe = get_field!(object, "timeframe");
 
-        Ok(DaySV {
+        Ok(Day {
             value: value,
             timeframe: timeframe
         })
     }
 }
 
-impl Serialize for DaySV {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
-        use serde::ser::impls::MapIteratorVisitor;
-        serializer.visit_map(MapIteratorVisitor::new(
-            vec![("value", to_value(&self.value)),
-                ("timeframe", to_value(&self.timeframe))].into_iter(), Some(2)))
-    }
-}
-
-#[derive(Debug)]
-struct DayMV {
-    value: Vec<Page>,
-    timeframe: Timeframe
-}
-
-impl Deserialize for DayMV {
-    fn deserialize<D>(deserializer: &mut D) -> Result<DayMV, D::Error> where D: Deserializer {
-        use serde::de::Error;
-        let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
-        let value = get_field!(object, "value");
-        let timeframe = get_field!(object, "timeframe");
-
-        Ok(DayMV {
-            value: value,
-            timeframe: timeframe
-        })
-    }
-}
-
-impl Serialize for DayMV {
+impl<V> Serialize for Day<V> where V: Serialize {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
         use serde::ser::impls::MapIteratorVisitor;
         serializer.visit_map(MapIteratorVisitor::new(
@@ -448,11 +380,11 @@ pub fn cache_page_view_range(pfrom: usize, pto: usize, from: DateTime<UTC>, to: 
     let mut s = unsafe {String::from_utf8_unchecked(v)};
 
     if interval.is_some() {
-        let mut result: KeenResultIntervalMV = try!(from_str(&s));
+        let mut result: KeenResult<Day<Vec<Page>>> = try!(from_str(&s));
         result.result.iter_mut().foreach(|day| day.value.retain(|p| p.result != 0));
         s = try!(to_string(&result));
     } else {
-        let mut result: KeenResult = try!(from_str(&s));
+        let mut result: KeenResult<Page> = try!(from_str(&s));
         result.result.retain(|p| p.result != 0);
         s = try!(to_string(&result));
     }
@@ -473,9 +405,9 @@ pub fn get_page_view_range(page_id: usize, pfrom: usize, pto: usize, from: DateT
     let s: String = try!(redis.get(&key[..]));
 
     if interval.is_some() {
-        let result: KeenResultIntervalMV = try!(from_str(&s));
+        let result: KeenResult<Day<Vec<Page>>> = try!(from_str(&s));
         let ds: Vec<_> = result.result.into_iter().map(|day| {
-            DaySV {
+            Day {
                 value: day.value.into_iter().find(|p| p.page_id == page_id).map(|s| s.result).unwrap_or(0) as usize,
                 timeframe: day.timeframe
             }
@@ -523,7 +455,7 @@ pub fn cache_with_field_range(pfrom: usize, pto: usize, field: &str, from: DateT
     let _ = resp.read_to_end(&mut v);
     let s = unsafe {String::from_utf8_unchecked(v)};
 
-    let mut result: KeenResult = try!(from_str(&s));
+    let mut result: KeenResult<Page> = try!(from_str(&s));
 
     result.result = result.result.into_iter().filter(|p| p.result != 0)
         .group_by(|p| p.page_id)
@@ -575,7 +507,7 @@ pub fn get_with_field_range(page_id: usize, pfrom: usize, pto: usize, field: &st
 
     let s: String = try!(redis.get(&key[..]));
 
-    let mut result: KeenResult = try!(from_str(&s));
+    let mut result: KeenResult<Page> = try!(from_str(&s));
 
     result.result.retain(|p| p.page_id == page_id);
  
