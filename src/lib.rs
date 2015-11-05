@@ -1,6 +1,3 @@
-#![feature(custom_derive, plugin,libc,box_patterns,custom_attribute,box_syntax,const_fn)]
-#![plugin(serde_macros)]
-
 extern crate hyper;
 extern crate chrono;
 extern crate serde_json;
@@ -30,13 +27,24 @@ use std::fmt::{Display, Formatter};
 use itertools::Itertools;
 
 use regex::Regex;
-use serde_json::{Value, to_string, from_str, from_reader};
+use serde_json::{Value, to_string, from_str, from_reader, from_value, to_value};
 use serde::{Deserialize, Deserializer, Serializer, Serialize};
+use serde::{de,ser};
 
 use redis::Commands;
 
 const RESULT_LENGTH: usize = 30;
 const PRE_TRIM_NUM: usize = 30;
+
+macro_rules! get_field {
+    ($obj: expr, $field: expr) => {
+        {
+            let v = $obj.remove($field);
+            let v = try!(v.ok_or(D::Error::missing_field($field)));
+            try!(from_value(v).map_err(|e| D::Error::syntax(&format!("{:?}", e))))
+        }
+    }
+}
 
 macro_rules! timeit {
     ($e: expr, $f: expr, $t: expr) => {
@@ -57,31 +65,126 @@ macro_rules! timeit {
     };
 }
 
-#[derive(Debug,Deserialize,Serialize)]
+#[derive(Debug)]
 struct KeenResultIntervalMV {
     result: Vec<DayMV>
 }
 
-#[derive(Debug,Deserialize,Serialize)]
+
+impl Deserialize for KeenResultIntervalMV {
+    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResultIntervalMV, D::Error> where D: Deserializer {
+        let mut bt: BTreeMap<String, Vec<DayMV>> = try!(BTreeMap::deserialize(deserializer));
+        Ok(KeenResultIntervalMV {
+            result: bt.remove("result").unwrap()
+        })
+    }
+}
+
+impl Serialize for KeenResultIntervalMV {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+        use serde::ser::impls::MapIteratorVisitor;
+        serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(), Some(1)))
+    }
+}
+
+#[derive(Debug)]
 struct KeenResultIntervalSV {
     result: Vec<DaySV>
 }
 
-#[derive(Debug,Deserialize,Serialize)]
+impl Serialize for KeenResultIntervalSV {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+        use serde::ser::impls::MapIteratorVisitor;
+        serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(), Some(1)))
+    }
+}
+
+impl Deserialize for KeenResultIntervalSV {
+    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResultIntervalSV, D::Error> where D: Deserializer {
+        let mut bt: BTreeMap<String, Vec<DaySV>> = try!(BTreeMap::deserialize(deserializer));
+        Ok(KeenResultIntervalSV {
+            result: bt.remove("result").unwrap()
+        })
+    }
+}
+
+#[derive(Debug)]
 struct KeenResult {
     result: Vec<Page>
 }
 
-#[derive(Debug,Deserialize,Serialize)]
+impl Deserialize for KeenResult {
+    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResult, D::Error> where D: Deserializer {
+        let mut bt: BTreeMap<String, Vec<Page>> = try!(BTreeMap::deserialize(deserializer));
+        Ok(KeenResult {
+            result: bt.remove("result").unwrap()
+        })
+    }
+}
+
+impl Serialize for KeenResult {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+        use serde::ser::impls::MapIteratorVisitor;
+        serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(), Some(1)))
+    }
+}
+
+#[derive(Debug)]
 struct DaySV {
     value: usize,
     timeframe: Timeframe
 }
 
-#[derive(Debug,Deserialize,Serialize)]
+impl Deserialize for DaySV {
+    fn deserialize<D>(deserializer: &mut D) -> Result<DaySV, D::Error> where D: Deserializer {
+        use serde::de::Error;
+        let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
+        let value = get_field!(object, "value");
+        let timeframe = get_field!(object, "timeframe");
+
+        Ok(DaySV {
+            value: value,
+            timeframe: timeframe
+        })
+    }
+}
+
+impl Serialize for DaySV {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+        use serde::ser::impls::MapIteratorVisitor;
+        serializer.visit_map(MapIteratorVisitor::new(
+            vec![("value", to_value(&self.value)),
+                ("timeframe", to_value(&self.timeframe))].into_iter(), Some(2)))
+    }
+}
+
+#[derive(Debug)]
 struct DayMV {
     value: Vec<Page>,
     timeframe: Timeframe
+}
+
+impl Deserialize for DayMV {
+    fn deserialize<D>(deserializer: &mut D) -> Result<DayMV, D::Error> where D: Deserializer {
+        use serde::de::Error;
+        let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
+        let value = get_field!(object, "value");
+        let timeframe = get_field!(object, "timeframe");
+
+        Ok(DayMV {
+            value: value,
+            timeframe: timeframe
+        })
+    }
+}
+
+impl Serialize for DayMV {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+        use serde::ser::impls::MapIteratorVisitor;
+        serializer.visit_map(MapIteratorVisitor::new(
+            vec![("value", to_value(&self.value)),
+                ("timeframe", to_value(&self.timeframe))].into_iter(), Some(2)))
+    }
 }
 
 #[derive(Debug)]
@@ -147,16 +250,49 @@ impl Page {
     }
 }
 
-#[derive(Debug,Deserialize,Serialize)]
+#[derive(Debug)]
 struct Timeframe {
     start: String,
     end: String
 }
 
-#[derive(Debug,Deserialize,Serialize)]
+impl Deserialize for Timeframe {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Timeframe, D::Error> where D: Deserializer {
+        use serde::de::Error;
+        let mut object: BTreeMap<String, String> = try!(BTreeMap::deserialize(deserializer));
+        let start = try!(object.remove("start").ok_or(D::Error::missing_field("no such field: start")));
+        let end = try!(object.remove("end").ok_or(D::Error::missing_field("no such field: end")));
+
+        Ok(Timeframe {
+            start: start,
+            end: end
+        })
+    }
+}
+
+impl Serialize for Timeframe {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+        use serde::ser::impls::MapIteratorVisitor;
+        serializer.visit_map(MapIteratorVisitor::new(
+            vec![("start", self.start.clone()), ("end", self.end.clone())].into_iter(), Some(2)))
+    }
+}
+
+#[derive(Debug)]
 pub struct KeenError {
     message: String,
     error_code: String
+}
+
+impl Deserialize for KeenError {
+    fn deserialize<D>(deserializer: &mut D) -> Result<KeenError, D::Error> where D: Deserializer {
+        use serde::de::Error;
+        let mut object: BTreeMap<String, String> = try!(BTreeMap::deserialize(deserializer));
+        Ok(KeenError {
+            message: try!(object.remove("message").ok_or(D::Error::missing_field("no such field: message"))),
+            error_code: try!(object.remove("error_code").ok_or(D::Error::missing_field("no such field: error_code")))
+        })
+    }
 }
 
 impl Display for KeenError {

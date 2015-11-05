@@ -1,6 +1,3 @@
-#![feature(plugin)]
-#![plugin(docopt_macros)]
-
 extern crate rustc_serialize;
 extern crate keen_native;
 extern crate docopt;
@@ -11,7 +8,7 @@ use keen::*;
 use docopt::Docopt;
 use chrono::*;
 
-docopt!(Args, "
+const USAGE: &'static str = "
 keen.
 
 Usage:
@@ -20,15 +17,19 @@ Usage:
 
 Options:
   -h --help    Show help.
-", arg_page_id: usize);
+";
+
+#[derive(Debug, RustcDecodable)]
+struct Args {
+    arg_pageid: usize,
+}
 
 fn main() {
     let _ = env_logger::init().unwrap();
-    let args: Args = Args::docopt().decode().unwrap_or_else(|e| e.exit());
-    let pid: usize = if let Ok(pid) = args.arg_pageid.parse() { pid } else {
-        println!(r#"{{"error": "cannot parse page_id: {}"}}"#, args.arg_pageid);
-        return;
-    };
+    let args: Args = Docopt::new(USAGE)
+        .and_then(|d| d.decode())
+        .unwrap_or_else(|e| e.exit());
+    let pid: usize = args.arg_pageid;
 
     let from = UTC::now() - Duration::days(1);
     let to = UTC::now();
@@ -52,37 +53,37 @@ fn main() {
         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
     }
 
-    match keen_native::get_page_view_range(pid, 0, 1000000, from.clone(), to.clone(), true, Some(Interval::Daily)) {
-        Ok(result) => println!(r#"{{"result": {}}}"#, result),
-        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-    }
+//     match keen_native::get_page_view_range(pid, 0, 1000000, from.clone(), to.clone(), true, Some(Interval::Daily)) {
+//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
+//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+//     }
 
-    match keen_native::get_page_view_range(pid, 450000, 460000, from.clone(), to.clone(), false, Some(Interval::Hourly)) {
-        Ok(result) => println!(r#"{{"result": {}}}"#, result),
-        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-    }
+//     match keen_native::get_page_view_range(pid, 450000, 460000, from.clone(), to.clone(), false, Some(Interval::Hourly)) {
+//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
+//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+//     }
 
-    match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true) {
-        Ok(result) => println!(r#"{{"result": {}}}"#, result),
-        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-    }
+//     match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), true) {
+//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
+//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+//     }
 
-    match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false) {
-        Ok(result) => println!(r#"{{"result": {}}}"#, result),
-        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-    }
+//     match keen_native::get_with_field_range(pid, 450000, 460000, "ip_geo_info.country", from.clone(), to.clone(), false) {
+//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
+//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+//     }
 
-    match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), true) {
-        Ok(result) => println!(r#"{{"result": {}}}"#, result),
-        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-    }
+//     match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), true) {
+//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
+//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+//     }
 
-    match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), false) {
-        Ok(result) => println!(r#"{{"result": {}}}"#, result),
-        Err(e) => println!(r#"{{"error": "{}"}}"#, e)
-    }
+//     match keen_native::get_with_field_range(pid, 450000, 460000, "normalized_referrer", from.clone(), to.clone(), false) {
+//         Ok(result) => println!(r#"{{"result": {}}}"#, result),
+//         Err(e) => println!(r#"{{"error": "{}"}}"#, e)
+//     }
 
-}
+// }
 
 
 
