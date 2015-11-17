@@ -344,13 +344,22 @@ lazy_static! {
 
 const COLLECTION: &'static str = "strikingly_pageviews";
 const TTL: usize = 48 * 60 * 60;
+const UTC_CORRECTION: i64 = 4;
+
+fn utc_correction(time: DateTime<UTC>, hours: i64) -> DateTime<UTC> {
+    time + Duration::hours(hours)
+}
+
+fn date_to_string(time: DateTime<UTC>, hours: i64) -> String {
+    utc_correction(time, hours).date().and_hms(0,0,0).to_rfc3339()
+}
 
 pub fn cache_page_view_range(pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool, interval: Option<Interval>) -> NativeResult<&'static str> {
     let client = try!(generate_keen_client());
     let redis = try!(open_redis());
 
-    let from_s = from.date().and_hms(0,0,0).to_rfc3339();
-    let to_s = to.date().and_hms(0,0,0).to_rfc3339();
+    let from_s = date_to_string(from, UTC_CORRECTION);
+    let to_s = date_to_string(to, UTC_CORRECTION);
 
     let metric = if unique {"count_unique"} else {"count"};
     let key = generate_redis_key(metric, Some("pageId"), &from_s, &to_s, interval.clone(), Some((pfrom, pto)));
@@ -396,8 +405,8 @@ pub fn cache_page_view_range(pfrom: usize, pto: usize, from: DateTime<UTC>, to: 
 
 pub fn get_page_view_range(page_id: usize, pfrom: usize, pto: usize, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool, interval: Option<Interval>) -> NativeResult<String> {
     let redis = try!(open_redis());
-    let from_s = from.date().and_hms(0,0,0).to_rfc3339();
-    let to_s = to.date().and_hms(0,0,0).to_rfc3339();
+    let from_s = date_to_string(from, 0);
+    let to_s = date_to_string(to, 0);
 
     let metric = if unique {"count_unique"} else {"count"};
     let key = generate_redis_key(metric, Some("pageId"), &from_s, &to_s, interval.clone(), Some((pfrom, pto)));
@@ -426,8 +435,8 @@ pub fn cache_with_field_range(pfrom: usize, pto: usize, field: &str, from: DateT
     let client = try!(generate_keen_client());
     let redis = try!(open_redis());
 
-    let from_s = from.date().and_hms(0,0,0).to_rfc3339();
-    let to_s = to.date().and_hms(0,0,0).to_rfc3339();
+    let from_s = date_to_string(from, UTC_CORRECTION);
+    let to_s = date_to_string(to, UTC_CORRECTION);
 
     let metric = if unique {"count_unique"} else {"count"};
     let key = generate_redis_key(metric, Some(field), &from_s, &to_s, None, Some((pfrom, pto)));
@@ -499,8 +508,8 @@ pub fn cache_with_field_range(pfrom: usize, pto: usize, field: &str, from: DateT
 pub fn get_with_field_range(page_id: usize, pfrom: usize, pto: usize, field: &str, from: DateTime<UTC>, to: DateTime<UTC>, unique: bool) -> NativeResult<String> {
     let redis = try!(open_redis());
 
-    let from_s = from.date().and_hms(0,0,0).to_rfc3339();
-    let to_s = to.date().and_hms(0,0,0).to_rfc3339();
+    let from_s = date_to_string(from, 0);
+    let to_s = date_to_string(to, 0);
 
     let metric = if unique {"count_unique"} else {"count"};
     let key = generate_redis_key(metric, Some(field), &from_s, &to_s, None, Some((pfrom, pto)));
