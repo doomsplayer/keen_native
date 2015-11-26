@@ -1,6 +1,6 @@
 [package]
-name = "keenio_fetcher"
-version = "0.1.0"
+name = "keenio_booster"
+version = "0.2.0"
 authors = ["Wu Young <doomsplayer@gmail.com>"]
 
 [dependencies]
@@ -22,7 +22,7 @@ libc = "0.2.0"
 
 [lib]
 path = "src/lib.rs"
-name = "keen_native"
+name = "keenio_booster"
 crate-type = ["dylib", "rlib"]
 
 [profile.release]
