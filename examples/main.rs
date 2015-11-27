@@ -33,7 +33,8 @@ fn main() {
     let key = env::var("KEEN_READ_KEY").unwrap();
     let proj = env::var("KEEN_PROJECT_ID").unwrap();
     let mut client = KeenCacheClient::new(&key, &proj);
-    let _ = client.set_redis("redis://127.0.0.1:6379");
+    let r = client.set_redis("redis://127.");
+    println!("{}",r.is_ok());
     client.set_timeout(time::Duration::new(30, 0));
     let metric = Metric::Count;
 

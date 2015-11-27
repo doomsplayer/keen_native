@@ -84,6 +84,7 @@ const LT: c_int = 1;
 const GT: c_int = 2;
 const LTE: c_int = 3;
 const GTE: c_int = 4;
+const IN: c_int = 5;
 
 #[no_mangle]
 pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *mut c_char, filter_b: *mut c_char) -> bool {
@@ -96,6 +97,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
             GT => Filter::gt(filter_a, filter_b),
             GTE => Filter::gte(filter_a, filter_b),
             LTE => Filter::lte(filter_a, filter_b),
+            IN => Filter::isin(filter_a, filter_b),
             _ => {
                 println!("unsupported filter: {}", filter_type);
                 return false
@@ -108,6 +110,9 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
 const MINUTELY: c_int = 0;
 const HOURLY: c_int = 1;
 const DAILY: c_int = 2;
+const WEEKLY: c_int = 3;
+const MONTHLY: c_int = 4;
+const YEARLY: c_int = 5;
 
 #[no_mangle]
 pub extern "C" fn interval(q: *mut KeenCacheQuery, interval: c_int) -> bool {
@@ -116,6 +121,9 @@ pub extern "C" fn interval(q: *mut KeenCacheQuery, interval: c_int) -> bool {
             MINUTELY => q.interval(Interval::Minutely),
             HOURLY => q.interval(Interval::Hourly),
             DAILY => q.interval(Interval::Daily),
+            WEEKLY => q.interval(Interval::Weekly),
+            MONTHLY => q.interval(Interval::Monthly),
+            YEARLY => q.interval(Interval::Yearly),
             _ => {
                 println!("unsupported interval: {}", interval);
                 return false
