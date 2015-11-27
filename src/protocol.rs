@@ -144,6 +144,22 @@ impl Select<Days<Items>> for KeenResult<Days<Items>> {
     }
 }
 
+impl Select<Days<i64>> for KeenResult<Days<Items>> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<Days<i64>> {
+        KeenResult {
+            result: self.result.into_iter().map(|day| {
+                let v = day.value.iter().find(|i| {
+                    i.fields.get(predicate.0).map(|v| v == &predicate.1).unwrap_or(false)
+                }).map(|i| i.result as i64).unwrap_or(0);
+                Day {
+                    value: v,
+                    timeframe: day.timeframe
+                }
+            }).collect()
+        }
+    }
+}
+
 impl<C> Deserialize for KeenResult<C> where C: Deserialize {
     fn deserialize<D>(deserializer: &mut D) -> Result<KeenResult<C>, D::Error> where D: Deserializer {
         let mut bt: BTreeMap<String, C> = try!(BTreeMap::deserialize(deserializer));

@@ -91,19 +91,37 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
     with(q, |q| {
         let filter_a = unsafe { CStr::from_ptr(filter_a).to_str().unwrap() };
         let filter_b = unsafe { CStr::from_ptr(filter_b).to_str().unwrap()};
-        let filter = match filter_type {
-            EQ => Filter::eq(filter_a, filter_b),
-            LT => Filter::lt(filter_a, filter_b),
-            GT => Filter::gt(filter_a, filter_b),
-            GTE => Filter::gte(filter_a, filter_b),
-            LTE => Filter::lte(filter_a, filter_b),
-            IN => Filter::isin(filter_a, filter_b),
-            _ => {
-                println!("unsupported filter: {}", filter_type);
-                return false
-            }
-        };
-        q.filter(filter);
+        let ri: Result<i64,_> = filter_b.parse();
+        if ri.is_err() {
+            let filter = match filter_type {
+                EQ => Filter::eq(filter_a, filter_b),
+                LT => Filter::lt(filter_a, filter_b),
+                GT => Filter::gt(filter_a, filter_b),
+                GTE => Filter::gte(filter_a, filter_b),
+                LTE => Filter::lte(filter_a, filter_b),
+                IN => Filter::isin(filter_a, filter_b),
+                _ => {
+                    println!("unsupported filter: {}", filter_type);
+                    return false
+                }
+            };
+            q.filter(filter);
+        } else {
+            let filter_b = ri.unwrap();
+            let filter = match filter_type {
+                EQ => Filter::eq(filter_a, filter_b),
+                LT => Filter::lt(filter_a, filter_b),
+                GT => Filter::gt(filter_a, filter_b),
+                GTE => Filter::gte(filter_a, filter_b),
+                LTE => Filter::lte(filter_a, filter_b),
+                IN => Filter::isin(filter_a, filter_b),
+                _ => {
+                    println!("unsupported filter: {}", filter_type);
+                    return false
+                }
+            };
+            q.filter(filter);
+        }
         true
     })
 }
@@ -141,6 +159,7 @@ const DAYSITEMS: c_int = 3;
 #[no_mangle]
 pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCacheResult<'a,()> {
     let q = unsafe { Box::from_raw(q) };
+    println!("query data: tp: {}", tp);
     let r = match tp {
         POD => {
                 let mut r: KeenCacheResult<i64> = match q.data() {
@@ -273,6 +292,11 @@ pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, v
                     r.tt();
                     return unsafe { transmute(Box::into_raw(Box::new(r))) }
                 },
+                DAYSPOD => {
+                    let mut r: KeenCacheResult<Days<i64>> = r.select((key, StringOrI64::String(value.into())));
+                    r.tt();
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
+                }
                 _ => {
                     println!("target type cannot be converted to");
                     return ptr::null()
@@ -287,28 +311,56 @@ pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char,
     let expire = expire as u64;
     with(r, |r| {
         let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
-        let _ = match r.type_tag {
-            ResultType::POD => unsafe { transmute::<_, Box<KeenCacheResult<'a, i64>>>(r).to_redis(key, expire) },
-            ResultType::DAYSITEMS => unsafe { transmute::<_, Box<KeenCacheResult<'a, Days<Items>>>>(r).to_redis(key, expire) },
-            ResultType::DAYSPOD => unsafe { transmute::<_, Box<KeenCacheResult<'a, Days<i64>>>>(r).to_redis(key, expire) },
-            ResultType::ITEMS => unsafe { transmute::<_, Box<KeenCacheResult<'a, Items>>>(r).to_redis(key, expire) },
+        let result = match r.type_tag {
+            ResultType::POD => unsafe { transmute::<_, &mut KeenCacheResult<'a, i64>>(r).to_redis(key, expire) },
+            ResultType::DAYSITEMS => unsafe { transmute::<_, &mut KeenCacheResult<'a, Days<Items>>>(r).to_redis(key, expire) },
+            ResultType::DAYSPOD => unsafe { transmute::<_, &mut KeenCacheResult<'a, Days<i64>>>(r).to_redis(key, expire) },
+            ResultType::ITEMS => unsafe { transmute::<_, &mut KeenCacheResult<'a, Items>>(r).to_redis(key, expire) },
         };
-        true
+
+        if result.is_err() {
+            println!("{}", result.unwrap_err());
+            return false
+        } else {
+            return true
+        }
     })
 }
 
 #[no_mangle]
 pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a,()>) -> *const c_char {
-    let r = unsafe { Box::from_raw(r) };
-    let s: String = match r.type_tag {
-        ResultType::POD => unsafe { (*transmute::<_, Box<KeenCacheResult<'a, i64>>>(r)).into() },
-        ResultType::DAYSITEMS => unsafe { (*transmute::<_, Box<KeenCacheResult<'a, Days<Items>>>>(r)).into() },
-        ResultType::DAYSPOD => unsafe { (*transmute::<_, Box<KeenCacheResult<'a, Days<i64>>>>(r)).into() },
-        ResultType::ITEMS => unsafe { (*transmute::<_, Box<KeenCacheResult<'a, Items>>>(r)).into() },
+    let ri = unsafe {Box::from_raw(r)};
+    println!("found tag: {:?}", ri.type_tag);
+    let s: String = match ri.type_tag {
+        ResultType::POD => {
+            let r = r as *mut KeenCacheResult<'a, i64>;
+            let r = unsafe { Box::from_raw(r) };
+            let r = *r;
+            r.to_string()
+        }
+        ResultType::DAYSITEMS => {
+            let r = r as *mut KeenCacheResult<'a, Days<Items>>;
+            let r = unsafe { Box::from_raw(r) };
+            let r = *r;
+            r.to_string()
+        }
+        ResultType::DAYSPOD => {
+            let r = r as *mut KeenCacheResult<'a, Days<i64>>;
+            let r = unsafe { Box::from_raw(r) };
+            let r = *r;
+            r.to_string()
+        }
+        ResultType::ITEMS => {
+            let r = r as *mut KeenCacheResult<'a, Items>;
+            let r = unsafe { Box::from_raw(r) };
+            let r = *r;
+            r.to_string()
+        }
     };
-    let sr = s.as_ptr();
-    forget(s);
-    sr as *const i8
+
+    let sr = CString::new(s).unwrap().into_raw();
+    forget(ri);
+    sr
 }
 
 #[no_mangle]

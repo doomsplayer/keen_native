@@ -82,6 +82,7 @@ impl<'a> KeenCacheQuery<'a> {
         self.query.max_age(age);
     }
     pub fn data<C>(&self) -> NativeResult<KeenCacheResult<C>> where C: Deserialize {
+        println!("url is :{}", self.query.url());
         let mut resp = try!(timeit!(self.query.data(), "get data from keen io"));
         if resp.status != StatusCode::Ok {
             let e: KeenError = try!(from_reader(resp));
@@ -89,6 +90,7 @@ impl<'a> KeenCacheQuery<'a> {
         }
         let mut s = String::new();
         let _ = resp.read_to_string(&mut s);
+        println!("recv data: {}", s);
         debug!("recv data: {}", s);
         let ret = KeenCacheResult {
             data: try!(from_str(&s)),
@@ -100,7 +102,7 @@ impl<'a> KeenCacheQuery<'a> {
 }
 
 #[repr(C)]
-#[derive(Clone,Copy)]
+#[derive(Clone,Copy,Debug)]
 pub enum ResultType {
     POD = 0,
     ITEMS = 1,
@@ -159,8 +161,8 @@ impl<'a, C> KeenCacheResult<'a, C> where C: Serialize {
     }
 }
 
-impl<'a, C> Into<String> for KeenCacheResult<'a, C> where C: Serialize {
-    fn into(self) -> String {
+impl<'a, C> KeenCacheResult<'a, C> where C: Serialize {
+    pub fn to_string(self) -> String {
         to_string(&self.data).unwrap()
     }
 }
