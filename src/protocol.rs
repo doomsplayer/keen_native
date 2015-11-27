@@ -7,6 +7,7 @@ use std::fmt::Formatter;
 use std::fmt::Display;
 use std::collections::BTreeMap;
 use serde::de::Visitor;
+use std::ops::{Deref,DerefMut};
 
 macro_rules! get_field {
     ($obj: expr, $field: expr) => {
@@ -18,7 +19,6 @@ macro_rules! get_field {
     }
 }
 
-pub type Items = Vec<Item>;
 pub type Days<I> = Vec<Day<I>>;
 
 // it could be
@@ -44,10 +44,10 @@ pub trait Select<O> {
     fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<O>;
 }
 
-impl Accumulate<i64> for KeenResult<Vec<Item>> {
+impl Accumulate<i64> for KeenResult<Items> {
     fn accumulate(self) -> KeenResult<i64> {
         let mut sum = 0;
-        for item in &self.result {
+        for item in &self.result.0 {
             sum += item.result as i64;
         }
         KeenResult {
@@ -58,7 +58,7 @@ impl Accumulate<i64> for KeenResult<Vec<Item>> {
 
 impl Select<i64> for KeenResult<Items> {
     fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
-        let ret = self.result.into_iter().find(|i| {
+        let ret = self.result.0.into_iter().find(|i| {
             i.fields.get(predicate.0).map(|v| v == &predicate.1).unwrap_or(false)
         }).map(|i| i.result).unwrap_or(0);
         KeenResult {
@@ -67,7 +67,7 @@ impl Select<i64> for KeenResult<Items> {
     }
 }
 
-impl Accumulate<i64> for KeenResult<Vec<Day<i64>>> {
+impl Accumulate<i64> for KeenResult<Days<i64>> {
     fn accumulate(self) -> KeenResult<i64> {
         let mut sum = 0;
         for day in &self.result {
@@ -78,12 +78,12 @@ impl Accumulate<i64> for KeenResult<Vec<Day<i64>>> {
         }
     }
 }
-impl Accumulate<Vec<Day<i64>>> for KeenResult<Vec<Day<Vec<Item>>>> {
-    fn accumulate(self) -> KeenResult<Vec<Day<i64>>> {
-        let ret = self.result.into_iter().map(|day: Day<Vec<Item>>| {
-            let value: Vec<Item> = day.value;
+impl Accumulate<Days<i64>> for KeenResult<Days<Items>> {
+    fn accumulate(self) -> KeenResult<Days<i64>> {
+        let ret = self.result.into_iter().map(|day: Day<Items>| {
+            let value: Items = day.value;
             let mut sum: i64 = 0;
-            for item in value {
+            for item in value.0 {
                 sum += item.result as i64
             }
             Day {
@@ -97,17 +97,17 @@ impl Accumulate<Vec<Day<i64>>> for KeenResult<Vec<Day<Vec<Item>>>> {
     }
 }
 
-impl Accumulate<Vec<Item>> for KeenResult<Vec<Day<Vec<Item>>>> {
-    fn accumulate(self) -> KeenResult<Vec<Item>> {
+impl Accumulate<Items> for KeenResult<Days<Items>> {
+    fn accumulate(self) -> KeenResult<Items> {
         unimplemented!()
     }
 }
 
-impl Accumulate<i64> for KeenResult<Vec<Day<Vec<Item>>>> {
+impl Accumulate<i64> for KeenResult<Days<Items>> {
     fn accumulate(self) -> KeenResult<i64> {
         let mut sum = 0;
         for day in &self.result {
-            for item in &day.value {
+            for item in &day.value.0 {
                 sum += item.result as i64
             }
         }
@@ -136,7 +136,7 @@ impl Select<Days<Items>> for KeenResult<Days<Items>> {
     fn select(mut self, predicate: (&str, StringOrI64)) -> KeenResult<Days<Items>> {
         for day in &mut self.result {
             day.value.retain(|item| item.fields.get(predicate.0).map(|v| v == &predicate.1).unwrap_or(false));
-            for item in &mut day.value {
+            for item in &mut day.value.0 {
                 item.fields.remove(predicate.0);
             }
         }
@@ -288,6 +288,35 @@ impl Serialize for StringOrI64 {
         }
     }
 }
+#[derive(Debug)]
+pub struct Items(Vec<Item>);
+
+impl Deref for Items {
+    type Target = Vec<Item>;
+    fn deref(&self) -> &Vec<Item> {
+        &self.0
+    }
+}
+
+impl DerefMut for Items {
+    fn deref_mut(&mut self) -> &mut Vec<Item> {
+        &mut self.0
+    }
+}
+
+impl Deserialize for Items {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Items, D::Error> where D: Deserializer {
+        let mut v = try!(Vec::<Item>::deserialize(deserializer));
+        v.retain(|i| i.result != 0);
+        Ok(Items(v))
+    }
+}
+
+impl Serialize for Items {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+        self.0.serialize(serializer)
+    }
+}
 
 #[derive(Debug)]
 pub struct Item {
@@ -334,7 +363,6 @@ struct Timeframe {
 
 impl Deserialize for Timeframe {
     fn deserialize<D>(deserializer: &mut D) -> Result<Timeframe, D::Error> where D: Deserializer {
-        
         let mut object: BTreeMap<String, String> = try!(BTreeMap::deserialize(deserializer));
         let start = try!(object.remove("start").ok_or(D::Error::missing_field("no such field: start")));
         let end = try!(object.remove("end").ok_or(D::Error::missing_field("no such field: end")));

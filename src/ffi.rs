@@ -159,7 +159,6 @@ const DAYSITEMS: c_int = 3;
 #[no_mangle]
 pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCacheResult<'a,()> {
     let q = unsafe { Box::from_raw(q) };
-    println!("query data: tp: {}", tp);
     let r = match tp {
         POD => {
                 let mut r: KeenCacheResult<i64> = match q.data() {
