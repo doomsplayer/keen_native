@@ -31,135 +31,6 @@ pub struct KeenResult<C> {
     result: C
 }
 
-// transforms:
-// Item -> POD: select 1 by attr (1 attr)
-// Day<POD> -> POD: accumulate all days ()
-// Day<Item> -> Item: accumulate all days ()
-// Day<Item> -> Day<POD>: select 1 by attr (1 attr)
-// Day<Item> -> POD: select 1 by attr (1 attr)
-pub trait Accumulate<O> {
-    fn accumulate(self) -> KeenResult<O>;
-}
-pub trait Select<O> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<O>;
-}
-
-impl Accumulate<i64> for KeenResult<Items> {
-    fn accumulate(self) -> KeenResult<i64> {
-        let mut sum = 0;
-        for item in &self.result.0 {
-            sum += item.result as i64;
-        }
-        KeenResult {
-            result: sum
-        }
-    }
-}
-
-impl Select<i64> for KeenResult<Items> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
-        let ret = self.result.0.into_iter().find(|i| {
-            i.fields.get(predicate.0).map(|v| v == &predicate.1).unwrap_or(false)
-        }).map(|i| i.result).unwrap_or(0);
-        KeenResult {
-            result: ret as i64
-        }
-    }
-}
-
-impl Accumulate<i64> for KeenResult<Days<i64>> {
-    fn accumulate(self) -> KeenResult<i64> {
-        let mut sum = 0;
-        for day in &self.result {
-            sum += day.value as i64;
-        }
-        KeenResult {
-            result: sum
-        }
-    }
-}
-impl Accumulate<Days<i64>> for KeenResult<Days<Items>> {
-    fn accumulate(self) -> KeenResult<Days<i64>> {
-        let ret = self.result.into_iter().map(|day: Day<Items>| {
-            let value: Items = day.value;
-            let mut sum: i64 = 0;
-            for item in value.0 {
-                sum += item.result as i64
-            }
-            Day {
-                value: sum,
-                timeframe: day.timeframe
-            }
-        }).collect();
-        KeenResult {
-            result: ret
-        }
-    }
-}
-
-impl Accumulate<Items> for KeenResult<Days<Items>> {
-    fn accumulate(self) -> KeenResult<Items> {
-        unimplemented!()
-    }
-}
-
-impl Accumulate<i64> for KeenResult<Days<Items>> {
-    fn accumulate(self) -> KeenResult<i64> {
-        let mut sum = 0;
-        for day in &self.result {
-            for item in &day.value.0 {
-                sum += item.result as i64
-            }
-        }
-        KeenResult {
-            result: sum
-        }
-    }
-}
-
-impl Select<i64> for KeenResult<Days<Items>> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
-        let mut sum = 0;
-        for day in &self.result {
-            sum += day.value.iter().find(|i| {
-                i.fields.get(predicate.0).map(|v| v == &predicate.1).unwrap_or(false)
-            }).map(|i| i.result as i64).unwrap_or(0);
-        }
-
-        KeenResult {
-            result: sum
-        }
-    }
-}
-
-impl Select<Days<Items>> for KeenResult<Days<Items>> {
-    fn select(mut self, predicate: (&str, StringOrI64)) -> KeenResult<Days<Items>> {
-        for day in &mut self.result {
-            day.value.retain(|item| item.fields.get(predicate.0).map(|v| v == &predicate.1).unwrap_or(false));
-            for item in &mut day.value.0 {
-                item.fields.remove(predicate.0);
-            }
-        }
-        self
-    }
-}
-
-impl Select<Days<i64>> for KeenResult<Days<Items>> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<Days<i64>> {
-        KeenResult {
-            result: self.result.into_iter().map(|day| {
-                let v = day.value.iter().find(|i| {
-                    i.fields.get(predicate.0).map(|v| v == &predicate.1).unwrap_or(false)
-                }).map(|i| i.result as i64).unwrap_or(0);
-                Day {
-                    value: v,
-                    timeframe: day.timeframe
-                }
-            }).collect()
-        }
-    }
-}
-
 impl<C> Deserialize for KeenResult<C> where C: Deserialize {
     fn deserialize<D>(deserializer: &mut D) -> Result<KeenResult<C>, D::Error> where D: Deserializer {
         let mut bt: BTreeMap<String, C> = try!(BTreeMap::deserialize(deserializer));
@@ -232,6 +103,7 @@ impl PartialEq for StringOrI64 {
         }
     }
 }
+
 struct StringOrI64Visitor;
 impl Visitor for StringOrI64Visitor {
     type Value = StringOrI64;
@@ -319,29 +191,42 @@ impl Serialize for Items {
 }
 
 #[derive(Debug)]
-pub struct Item {
-    result: u64,
-    fields: BTreeMap<String, StringOrI64>,
+pub struct CompressedFields(String);
+impl CompressedFields {
+    fn get(&self, key: &str) -> Option<StringOrI64> {
+        use serde_json::from_str;
+        let g: Result<BTreeMap<String, StringOrI64>, _> = from_str(&self.0);
+        g.ok().and_then(|bt| {
+            bt.get(key).map(|s| s.clone())
+        })
+    }
+    fn remove(&mut self, key: &str) {
+        use serde_json::{from_str,to_string};
+        let g: Result<BTreeMap<String, StringOrI64>, _> = from_str(&self.0);
+        self.0 = g.ok().and_then(|mut bt| {
+            bt.remove(key);
+            to_string(&bt).ok()
+        }).unwrap_or_default();
+    }
 }
 
+#[derive(Debug)]
+pub struct Item {
+    result: u64,
+    fields: CompressedFields
+}
+// BTreeMap<String, StringOrI64>
 impl Deserialize for Item {
     fn deserialize<D>(deserializer: &mut D) -> Result<Item, D::Error> where D: Deserializer {
+        use serde_json::ser::to_string;
         let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
         let result = try!(object.remove("result").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: result")));
 
-        let object = object.into_iter().map(|(k,v)| {
-            let v = if v.is_number() {
-                StringOrI64::I64(v.as_i64().unwrap())
-            } else if v.is_string() {
-                StringOrI64::String(v.as_string().unwrap().into())
-            } else {
-                StringOrI64::I64(0)
-            };
-            (k, v)
-        }).collect();
+        let fields = to_string(&object).unwrap();
+
         let page = Item {
             result: result,
-            fields: object
+            fields: CompressedFields(fields)
         };
         Ok(page)
     }
@@ -349,9 +234,10 @@ impl Deserialize for Item {
 
 impl Serialize for Item {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
-        let mut bt = self.fields.clone();
-        bt.insert("result".to_owned(), StringOrI64::I64(self.result as i64));
-        bt.serialize(serializer)
+        use serde_json::from_str;
+        let mut object: BTreeMap<String, Value> = from_str(&self.fields.0).ok().unwrap_or_default();
+        object.insert("result".to_owned(), Value::I64(self.result as i64));
+        object.serialize(serializer)
     }
 }
 
@@ -409,3 +295,134 @@ impl Error for KeenError {
         &self.message
     }
 }
+
+// transforms:
+// transforms:
+// Item -> POD: select 1 by attr (1 attr)
+// Day<POD> -> POD: accumulate all days ()
+// Day<Item> -> Item: accumulate all days ()
+// Day<Item> -> Day<POD>: select 1 by attr (1 attr)
+// Day<Item> -> POD: select 1 by attr (1 attr)
+pub trait Accumulate<O> {
+    fn accumulate(self) -> KeenResult<O>;
+}
+pub trait Select<O> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<O>;
+}
+
+impl Accumulate<i64> for KeenResult<Items> {
+    fn accumulate(self) -> KeenResult<i64> {
+        let mut sum = 0;
+        for item in &self.result.0 {
+            sum += item.result as i64;
+        }
+        KeenResult {
+            result: sum
+        }
+    }
+}
+
+impl Select<i64> for KeenResult<Items> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
+        let ret = self.result.0.into_iter().find(|i| {
+            i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+        }).map(|i| i.result).unwrap_or(0);
+        KeenResult {
+            result: ret as i64
+        }
+    }
+}
+
+impl Accumulate<i64> for KeenResult<Days<i64>> {
+    fn accumulate(self) -> KeenResult<i64> {
+        let mut sum = 0;
+        for day in &self.result {
+            sum += day.value as i64;
+        }
+        KeenResult {
+            result: sum
+        }
+    }
+}
+impl Accumulate<Days<i64>> for KeenResult<Days<Items>> {
+    fn accumulate(self) -> KeenResult<Days<i64>> {
+        let ret = self.result.into_iter().map(|day: Day<Items>| {
+            let value: Items = day.value;
+            let mut sum: i64 = 0;
+            for item in value.0 {
+                sum += item.result as i64
+            }
+            Day {
+                value: sum,
+                timeframe: day.timeframe
+            }
+        }).collect();
+        KeenResult {
+            result: ret
+        }
+    }
+}
+
+impl Accumulate<Items> for KeenResult<Days<Items>> {
+    fn accumulate(self) -> KeenResult<Items> {
+        unimplemented!()
+    }
+}
+
+impl Accumulate<i64> for KeenResult<Days<Items>> {
+    fn accumulate(self) -> KeenResult<i64> {
+        let mut sum = 0;
+        for day in &self.result {
+            for item in &day.value.0 {
+                sum += item.result as i64
+            }
+        }
+        KeenResult {
+            result: sum
+        }
+    }
+}
+
+impl Select<i64> for KeenResult<Days<Items>> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
+        let mut sum = 0;
+        for day in &self.result {
+            sum += day.value.iter().find(|i| {
+                i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+            }).map(|i| i.result as i64).unwrap_or(0);
+        }
+
+        KeenResult {
+            result: sum
+        }
+    }
+}
+
+impl Select<Days<Items>> for KeenResult<Days<Items>> {
+    fn select(mut self, predicate: (&str, StringOrI64)) -> KeenResult<Days<Items>> {
+        for day in &mut self.result {
+            day.value.retain(|item| item.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false));
+            for item in &mut day.value.0 {
+                item.fields.remove(predicate.0);
+            }
+        }
+        self
+    }
+}
+
+impl Select<Days<i64>> for KeenResult<Days<Items>> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<Days<i64>> {
+        KeenResult {
+            result: self.result.into_iter().map(|day| {
+                let v = day.value.iter().find(|i| {
+                    i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+                }).map(|i| i.result as i64).unwrap_or(0);
+                Day {
+                    value: v,
+                    timeframe: day.timeframe
+                }
+            }).collect()
+        }
+    }
+}
+
