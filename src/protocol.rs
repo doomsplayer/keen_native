@@ -312,8 +312,10 @@ pub trait Accumulate<O> {
 impl Accumulate<i64> for KeenResult<Items> {
     fn accumulate(self) -> KeenResult<i64> {
         let mut sum = 0;
-        for item in &self.result.0 {
-            sum += item.result as i64;
+        timeit! {
+            for item in &self.result.0 {
+                sum += item.result as i64;
+            }, "transform - timeit"
         }
         KeenResult {
             result: sum
@@ -324,8 +326,10 @@ impl Accumulate<i64> for KeenResult<Items> {
 impl Accumulate<i64> for KeenResult<Days<i64>> {
     fn accumulate(self) -> KeenResult<i64> {
         let mut sum = 0;
-        for day in &self.result {
-            sum += day.value as i64;
+        timeit! {
+            for day in &self.result {
+                sum += day.value as i64;
+            }, "transform - accumulate"
         }
         KeenResult {
             result: sum
@@ -334,17 +338,19 @@ impl Accumulate<i64> for KeenResult<Days<i64>> {
 }
 impl Accumulate<Days<i64>> for KeenResult<Days<Items>> {
     fn accumulate(self) -> KeenResult<Days<i64>> {
-        let ret = self.result.into_iter().map(|day: Day<Items>| {
-            let value: Items = day.value;
-            let mut sum: i64 = 0;
-            for item in value.0 {
-                sum += item.result as i64
-            }
-            Day {
-                value: sum,
-                timeframe: day.timeframe
-            }
-        }).collect();
+        let ret = timeit! {
+            self.result.into_iter().map(|day: Day<Items>| {
+                let value: Items = day.value;
+                let mut sum: i64 = 0;
+                for item in value.0 {
+                    sum += item.result as i64
+                }
+                Day {
+                    value: sum,
+                    timeframe: day.timeframe
+                }
+            }).collect(), "transform - accumulate"
+        };
         KeenResult {
             result: ret
         }
@@ -360,10 +366,12 @@ impl Accumulate<Items> for KeenResult<Days<Items>> {
 impl Accumulate<i64> for KeenResult<Days<Items>> {
     fn accumulate(self) -> KeenResult<i64> {
         let mut sum = 0;
-        for day in &self.result {
-            for item in &day.value.0 {
-                sum += item.result as i64
-            }
+        timeit! {
+            for day in &self.result {
+                for item in &day.value.0 {
+                    sum += item.result as i64
+                }
+            }, "transform - accumulate"
         }
         KeenResult {
             result: sum
@@ -377,9 +385,11 @@ pub trait Select<O> {
 
 impl Select<i64> for KeenResult<Items> {
     fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
-        let ret = self.result.0.into_iter().find(|i| {
-            i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
-        }).map(|i| i.result).unwrap_or(0);
+        let ret = timeit! {
+            self.result.0.into_iter().find(|i| {
+                i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+            }).map(|i| i.result).unwrap_or(0), "transform - select"
+        };
         KeenResult {
             result: ret as i64
         }
@@ -389,12 +399,13 @@ impl Select<i64> for KeenResult<Items> {
 impl Select<i64> for KeenResult<Days<Items>> {
     fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
         let mut sum = 0;
-        for day in &self.result {
-            sum += day.value.iter().find(|i| {
-                i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
-            }).map(|i| i.result as i64).unwrap_or(0);
+        timeit! {
+            for day in &self.result {
+                sum += day.value.iter().find(|i| {
+                    i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+                }).map(|i| i.result as i64).unwrap_or(0);
+            }, "transform - select"
         }
-
         KeenResult {
             result: sum
         }
@@ -403,11 +414,13 @@ impl Select<i64> for KeenResult<Days<Items>> {
 
 impl Select<Days<Items>> for KeenResult<Days<Items>> {
     fn select(mut self, predicate: (&str, StringOrI64)) -> KeenResult<Days<Items>> {
-        for day in &mut self.result {
-            day.value.retain(|item| item.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false));
-            for item in &mut day.value.0 {
-                item.fields.remove(predicate.0);
-            }
+        timeit! {
+            for day in &mut self.result {
+                day.value.retain(|item| item.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false));
+                for item in &mut day.value.0 {
+                    item.fields.remove(predicate.0);
+                }
+            }, "transform - select"
         }
         self
     }
@@ -415,6 +428,7 @@ impl Select<Days<Items>> for KeenResult<Days<Items>> {
 
 impl Select<Days<i64>> for KeenResult<Days<Items>> {
     fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<Days<i64>> {
+        timeit! {
         KeenResult {
             result: self.result.into_iter().map(|day| {
                 let v = day.value.iter().find(|i| {
@@ -425,7 +439,7 @@ impl Select<Days<i64>> for KeenResult<Days<Items>> {
                     timeframe: day.timeframe
                 }
             }).collect()
-        }
+        }, "transform - select" }
     }
 }
 
@@ -435,10 +449,10 @@ pub trait Range<O> {
 
 impl<C> Range<Days<C>> for KeenResult<Days<C>> {
     fn range(mut self, from: DateTime<UTC>, to: DateTime<UTC>) -> KeenResult<Days<C>> {
-        self.result.retain(|d| {
+        timeit!(self.result.retain(|d| {
             from <= d.timeframe.start.parse().ok().unwrap_or(UTC::now()) &&
                 d.timeframe.end.parse().ok().unwrap_or(UTC::now())  <= to
-        });
+        }), "transform - range");
         self
     }
 }

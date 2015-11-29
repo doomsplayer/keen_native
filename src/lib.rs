@@ -10,10 +10,10 @@ extern crate env_logger;
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate log;
 
+#[macro_use] mod client;
 mod error;
 mod protocol;
 mod cache;
-mod client;
 mod ffi;
 
 #[no_mangle]
