@@ -101,7 +101,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                 LTE => Filter::lte(filter_a, filter_b),
                 IN => Filter::isin(filter_a, filter_b),
                 _ => {
-                    println!("unsupported filter: {}", filter_type);
+                    warn!("unsupported filter: {}", filter_type);
                     return false
                 }
             };
@@ -116,7 +116,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                 LTE => Filter::lte(filter_a, filter_b),
                 IN => Filter::isin(filter_a, filter_b),
                 _ => {
-                    println!("unsupported filter: {}", filter_type);
+                    warn!("unsupported filter: {}", filter_type);
                     return false
                 }
             };
@@ -143,7 +143,7 @@ pub extern "C" fn interval(q: *mut KeenCacheQuery, interval: c_int) -> bool {
             MONTHLY => q.interval(Interval::Monthly),
             YEARLY => q.interval(Interval::Yearly),
             _ => {
-                println!("unsupported interval: {}", interval);
+                warn!("unsupported interval: {}", interval);
                 return false
             }
         }
@@ -161,13 +161,13 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
     let q = unsafe { Box::from_raw(q) };
     let r = match tp {
         POD => {
-                let mut r: KeenCacheResult<i64> = match q.data() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        println!("{}", e);
-                        return ptr::null()
-                    }
-                };
+            let mut r: KeenCacheResult<i64> = match q.data() {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("data type can not be converted to: target: i64, {}", e);
+                    return ptr::null()
+                }
+            };
             r.tt();
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
@@ -175,8 +175,8 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
             let mut r: KeenCacheResult<Items> = match q.data() {
                 Ok(s) => s,
                 Err(e) => {
-                    println!("{}", e);
-                        return ptr::null()
+                    warn!("data type can not be converted to: target: Items, {}", e);
+                    return ptr::null()
                 }
             };
             r.tt();
@@ -186,7 +186,7 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
             let mut r: KeenCacheResult<Days<i64>> = match q.data() {
                 Ok(s) => s,
                 Err(e) => {
-                    println!("{}", e);
+                    warn!("data type can not be converted to: target: Days<i64>, {}", e);
                     return ptr::null()
                 }
             };
@@ -194,18 +194,18 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
         DAYSITEMS => {
-                let mut r: KeenCacheResult<Days<Items>> = match q.data() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        println!("{}", e);
-                        return ptr::null()
-                    }
-                };
+            let mut r: KeenCacheResult<Days<Items>> = match q.data() {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("data type can not be converted to: target: Days<Items>, {}", e);
+                    return ptr::null()
+                }
+            };
             r.tt();
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
         _ => {
-            println!("unsupported type: {}", tp);
+            warn!("unsupported type: {}", tp);
             return ptr::null()
         }
     };
@@ -215,24 +215,24 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
 #[no_mangle]
 pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a,()>, to: c_int) -> *const KeenCacheResult<'a, ()> {
     let r = unsafe { Box::from_raw(r) };
-    match r.type_tag as c_int {
-        POD => {
-            println!("cannot convert pod");
+    match r.type_tag{
+        ResultType::POD => {
+            warn!("cannot convert pod");
             return ptr::null()
         }
-        ITEMS => {
+        ResultType::ITEMS => {
             let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
             let mut r: KeenCacheResult<i64> = r.accumulate();
             r.tt();
             return unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
-        DAYSPOD => {
+        ResultType::DAYSPOD => {
             let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
             let mut r: KeenCacheResult<i64> = r.accumulate();
             r.tt();
             return unsafe {transmute(Box::into_raw(Box::new(r)))}
         }
-        DAYSITEMS => {
+        ResultType::DAYSITEMS => {
             let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
             match to {
                 DAYSPOD => {
@@ -246,14 +246,40 @@ pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a,()>, to: c_int) -> *
                     return unsafe { transmute(Box::into_raw(Box::new(r))) }
                 },
                 _ => {
-                    println!("target type cannot be converted to");
+                    warn!("target type cannot be converted to: {}", to);
                     return ptr::null()
                 }
             }
         }
-        _ => {
-            println!("not support this convert");
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn range<'a>(r: *mut KeenCacheResult<'a,()>, from: *mut c_char, to: *mut c_char) -> *const KeenCacheResult<'a, ()> {
+    let from = unsafe { CStr::from_ptr(from).to_str().unwrap() };
+    let to = unsafe { CStr::from_ptr(to).to_str().unwrap() };
+    let from = from.parse().unwrap();
+    let to = to.parse().unwrap();
+
+    let r = unsafe { Box::from_raw(r) };
+    match r.type_tag{
+        ResultType::POD => {
+            warn!("cannot use range on pod");
             return ptr::null()
+        }
+        ResultType::ITEMS => {
+            warn!("cannot use range on items");
+            return ptr::null()
+        }
+        ResultType::DAYSPOD => {
+            let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
+            let r = r.range(from, to);
+            return unsafe {transmute(Box::into_raw(Box::new(r)))}
+        }
+        ResultType::DAYSITEMS => {
+            let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
+            let r = r.range(from, to);
+            return unsafe {transmute(Box::into_raw(Box::new(r)))}
         }
     }
 }
@@ -265,7 +291,7 @@ pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, v
     let r = unsafe { Box::from_raw(r) };
     match r.type_tag {
         ResultType::POD => {
-            println!("cannot convert pod");
+            warn!("cannot select on pod");
             return ptr::null()
         }
         ResultType::ITEMS => {
@@ -275,7 +301,7 @@ pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, v
             return unsafe { transmute(Box::into_raw(Box::new(r))) }
             }
         ResultType::DAYSPOD => {
-            println!("cannot convert pod");
+            warn!("cannot select on Days<i64>");
             return ptr::null()
         }
         ResultType::DAYSITEMS => {
@@ -297,7 +323,7 @@ pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, v
                     return unsafe { transmute(Box::into_raw(Box::new(r))) }
                 }
                 _ => {
-                    println!("target type cannot be converted to");
+                    warn!("target type cannot be converted to: {}", to);
                     return ptr::null()
                 }
             }
@@ -318,7 +344,7 @@ pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char,
         };
 
         if result.is_err() {
-            println!("{}", result.unwrap_err());
+            warn!("to_redis error: {}", result.unwrap_err());
             return false
         } else {
             return true
@@ -327,38 +353,55 @@ pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char,
 }
 
 #[no_mangle]
-pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a,()>) -> *const c_char {
+pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<'a,()>) {
     let ri = unsafe {Box::from_raw(r)};
-    println!("found tag: {:?}", ri.type_tag);
-    let s: String = match ri.type_tag {
+    match ri.type_tag {
         ResultType::POD => {
             let r = r as *mut KeenCacheResult<'a, i64>;
-            let r = unsafe { Box::from_raw(r) };
-            let r = *r;
-            r.to_string()
+            let _ = unsafe { Box::from_raw(r) };
         }
         ResultType::DAYSITEMS => {
             let r = r as *mut KeenCacheResult<'a, Days<Items>>;
-            let r = unsafe { Box::from_raw(r) };
-            let r = *r;
-            r.to_string()
+            let _ = unsafe { Box::from_raw(r) };
         }
         ResultType::DAYSPOD => {
             let r = r as *mut KeenCacheResult<'a, Days<i64>>;
-            let r = unsafe { Box::from_raw(r) };
-            let r = *r;
-            r.to_string()
+            let _ = unsafe { Box::from_raw(r) };
         }
         ResultType::ITEMS => {
             let r = r as *mut KeenCacheResult<'a, Items>;
-            let r = unsafe { Box::from_raw(r) };
-            let r = *r;
+            let _ = unsafe { Box::from_raw(r) };
+        }
+    }
+    forget(ri)
+}
+
+#[no_mangle]
+pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a,()>) -> *const c_char {
+    let r = unsafe {Box::from_raw(r)};
+    info!("get data from result: found tag: {:?}", r.type_tag);
+
+    // *KeenCacheResult destructed here
+    let s: String = match r.type_tag {
+        ResultType::POD => {
+            let r: Box<KeenCacheResult<'a, i64>> = unsafe { transmute(r) };
+            r.to_string()
+        }
+        ResultType::DAYSITEMS => {
+            let r: Box<KeenCacheResult<'a, Days<Items>>> = unsafe { transmute(r) };
+            r.to_string()
+        }
+        ResultType::DAYSPOD => {
+            let r: Box<KeenCacheResult<'a, Days<i64>>> = unsafe { transmute(r) };
+            r.to_string()
+        }
+        ResultType::ITEMS => {
+            let r: Box<KeenCacheResult<'a, Items>> = unsafe { transmute(r) };
             r.to_string()
         }
     };
 
     let sr = CString::new(s).unwrap().into_raw();
-    forget(ri);
     sr
 }
 
@@ -429,3 +472,7 @@ pub extern "C" fn dealloc_str(s: *mut c_char) {
 }
 
 
+#[no_mangle]
+pub extern "C" fn enable_log() {
+    ::logger()
+}

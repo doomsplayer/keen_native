@@ -8,6 +8,8 @@ use std::fmt::Display;
 use std::collections::BTreeMap;
 use serde::de::Visitor;
 use std::ops::{Deref,DerefMut};
+use chrono::DateTime;
+use chrono::UTC;
 
 macro_rules! get_field {
     ($obj: expr, $field: expr) => {
@@ -306,9 +308,6 @@ impl Error for KeenError {
 pub trait Accumulate<O> {
     fn accumulate(self) -> KeenResult<O>;
 }
-pub trait Select<O> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<O>;
-}
 
 impl Accumulate<i64> for KeenResult<Items> {
     fn accumulate(self) -> KeenResult<i64> {
@@ -318,17 +317,6 @@ impl Accumulate<i64> for KeenResult<Items> {
         }
         KeenResult {
             result: sum
-        }
-    }
-}
-
-impl Select<i64> for KeenResult<Items> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
-        let ret = self.result.0.into_iter().find(|i| {
-            i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
-        }).map(|i| i.result).unwrap_or(0);
-        KeenResult {
-            result: ret as i64
         }
     }
 }
@@ -383,6 +371,21 @@ impl Accumulate<i64> for KeenResult<Days<Items>> {
     }
 }
 
+pub trait Select<O> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<O>;
+}
+
+impl Select<i64> for KeenResult<Items> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
+        let ret = self.result.0.into_iter().find(|i| {
+            i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+        }).map(|i| i.result).unwrap_or(0);
+        KeenResult {
+            result: ret as i64
+        }
+    }
+}
+
 impl Select<i64> for KeenResult<Days<Items>> {
     fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
         let mut sum = 0;
@@ -426,3 +429,16 @@ impl Select<Days<i64>> for KeenResult<Days<Items>> {
     }
 }
 
+pub trait Range<O> {
+    fn range(self, from: DateTime<UTC>, to: DateTime<UTC>) -> KeenResult<O>;
+}
+
+impl<C> Range<Days<C>> for KeenResult<Days<C>> {
+    fn range(mut self, from: DateTime<UTC>, to: DateTime<UTC>) -> KeenResult<Days<C>> {
+        self.result.retain(|d| {
+            from <= d.timeframe.start.parse().ok().unwrap_or(UTC::now()) &&
+                d.timeframe.end.parse().ok().unwrap_or(UTC::now())  <= to
+        });
+        self
+    }
+}

@@ -8,13 +8,12 @@ use serde_json::to_string;
 use serde::Deserialize;
 use serde::Serialize;
 use cache::open_redis;
-use std::convert::Into;
 use chrono::UTC;
 use error::NativeError;
 use hyper::status::StatusCode;
 use redis::Connection;
 use redis::Commands;
-use std::io::Read;
+use chrono::DateTime;
 
 macro_rules! timeit {
     ($e: expr, $f: expr, $t: expr) => {
@@ -82,18 +81,15 @@ impl<'a> KeenCacheQuery<'a> {
         self.query.max_age(age);
     }
     pub fn data<C>(&self) -> NativeResult<KeenCacheResult<C>> where C: Deserialize {
-        println!("url is :{}", self.query.url());
-        let mut resp = try!(timeit!(self.query.data(), "get data from keen io"));
+        info!("get data from keenio: url is :{}", self.query.url());
+
+        let resp = try!(timeit!(self.query.data(), "get data from keen io"));
         if resp.status != StatusCode::Ok {
             let e: KeenError = try!(from_reader(resp));
             return Err(NativeError::KeenError(e));
         }
-        let mut s = String::new();
-        let _ = resp.read_to_string(&mut s);
-        println!("recv data: {}", s);
-        debug!("recv data: {}", s);
         let ret = KeenCacheResult {
-            data: try!(from_str(&s)),
+            data: try!(timeit!(from_reader(resp), "decode data from reader")),
             redis: self.redis.clone(),
             type_tag: ResultType::POD
         };
@@ -101,7 +97,6 @@ impl<'a> KeenCacheQuery<'a> {
     }
 }
 
-#[repr(C)]
 #[derive(Clone,Copy,Debug)]
 pub enum ResultType {
     POD = 0,
@@ -124,8 +119,8 @@ impl<'a> KeenCacheResult<'a, Days<Items>> { pub fn tt(&mut self) { self.type_tag
 impl<'a,C> KeenCacheResult<'a, C> where C: Deserialize {
     pub fn from_redis(url: &str, key: &str) -> NativeResult<KeenCacheResult<'a,C>> {
         let c = try!(open_redis(url));
-        let s: String = try!(c.get(key));
-        let result = try!(from_str(&s));
+        let s: String = try!(timeit!(c.get(key), "get data from redis"));
+        let result = try!(timeit!(from_str(&s), "decode data from redis"));
         Ok(KeenCacheResult {
             type_tag: ResultType::POD,
             data: result,
@@ -134,12 +129,22 @@ impl<'a,C> KeenCacheResult<'a, C> where C: Deserialize {
     }
 }
 
+impl<'a, C> KeenCacheResult<'a, Days<C>> {
+    pub fn range(self, from: DateTime<UTC>, to: DateTime<UTC>) -> KeenCacheResult<'a, Days<C>> {
+        let r = KeenCacheResult {
+            data: self.data.range(from, to),
+            redis: self.redis,
+            type_tag: self.type_tag
+        };
+        r
+    }
+}
 impl<'a, C> KeenCacheResult<'a, C> where C: Serialize {
     pub fn accumulate<O>(self) -> KeenCacheResult<'a, O> where KeenResult<C>: Accumulate<O>{
         let r = KeenCacheResult {
             data: self.data.accumulate(),
             redis: self.redis,
-            type_tag: ResultType::POD
+            type_tag: self.type_tag // will be set later with *.tt()
         };
         r
     }
@@ -147,7 +152,7 @@ impl<'a, C> KeenCacheResult<'a, C> where C: Serialize {
         let r = KeenCacheResult {
             data: self.data.select(predicate),
             redis: self.redis,
-            type_tag: ResultType::POD
+            type_tag: self.type_tag // will be set later with *.tt()
         };
         r
     }
@@ -159,10 +164,7 @@ impl<'a, C> KeenCacheResult<'a, C> where C: Serialize {
         }
         Ok(())
     }
-}
-
-impl<'a, C> KeenCacheResult<'a, C> where C: Serialize {
-    pub fn to_string(self) -> String {
+    pub fn to_string(&self) -> String {
         to_string(&self.data).unwrap()
     }
 }
