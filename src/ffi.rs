@@ -85,6 +85,7 @@ const GT: c_int = 2;
 const LTE: c_int = 3;
 const GTE: c_int = 4;
 const IN: c_int = 5;
+const NE: c_int = 6;
 
 #[no_mangle]
 pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *mut c_char, filter_b: *mut c_char) -> bool {
@@ -101,6 +102,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                 GTE => Filter::gte(filter_a, filter_b),
                 LTE => Filter::lte(filter_a, filter_b),
                 IN => Filter::isin(filter_a, filter_b),
+                NE => Filter::ne(filter_a, filter_b),
                 _ => {
                     warn!("unsupported filter: {}", filter_type);
                     return false
@@ -125,6 +127,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                         GTE => Filter::gte(filter_a, filter_b),
                         LTE => Filter::lte(filter_a, filter_b),
                         IN => Filter::isin(filter_a, filter_b),
+                        NE => Filter::ne(filter_a, filter_b),
                         _ => {
                             warn!("unsupported filter: {}", filter_type);
                             return false
@@ -142,6 +145,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                         GTE => Filter::gte(filter_a, filter_b),
                         LTE => Filter::lte(filter_a, filter_b),
                         IN => Filter::isin(filter_a, filter_b),
+                        NE => Filter::ne(filter_a, filter_b),
                         _ => {
                             warn!("unsupported filter: {}", filter_type);
                             return false
@@ -158,6 +162,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                 GTE => Filter::gte(filter_a, filter_b),
                 LTE => Filter::lte(filter_a, filter_b),
                 IN => Filter::isin(filter_a, filter_b),
+                NE => Filter::ne(filter_a, filter_b),
                 _ => {
                     warn!("unsupported filter: {}", filter_type);
                     return false
