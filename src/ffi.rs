@@ -91,8 +91,9 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
     with(q, |q| {
         let filter_a = unsafe { CStr::from_ptr(filter_a).to_str().unwrap() };
         let filter_b = unsafe { CStr::from_ptr(filter_b).to_str().unwrap()};
-        let ri: Result<i64,_> = filter_b.parse();
-        if ri.is_err() {
+        if let Ok(i) = filter_b.parse() {
+            // int
+            let filter_b: i64 = i;
             let filter = match filter_type {
                 EQ => Filter::eq(filter_a, filter_b),
                 LT => Filter::lt(filter_a, filter_b),
@@ -106,8 +107,50 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                 }
             };
             q.filter(filter);
+        } else if filter_b.ends_with(']') && filter_b.starts_with('[') {
+            // vec
+            let filter_b = filter_b.trim_matches('[').trim_matches(']');
+
+            if filter_b
+                .split(',')
+                .map(|c| c.trim())
+                .find(|c| c.starts_with('"') && c.ends_with('"')).is_some() {
+                    // string vec
+                    let iter = filter_b.split(',').map(|c| c.trim());
+                    let filter_b: Vec<_> = iter.collect();
+                    let filter = match filter_type {
+                        EQ => Filter::eq(filter_a, filter_b),
+                        LT => Filter::lt(filter_a, filter_b),
+                        GT => Filter::gt(filter_a, filter_b),
+                        GTE => Filter::gte(filter_a, filter_b),
+                        LTE => Filter::lte(filter_a, filter_b),
+                        IN => Filter::isin(filter_a, filter_b),
+                        _ => {
+                            warn!("unsupported filter: {}", filter_type);
+                            return false
+                        }
+                    };
+                    q.filter(filter);
+                } else {
+                    // int vec
+                    let iter = filter_b.split(',').map(|c| c.trim());
+                    let filter_b: Vec<_> = iter.map(|c| c.parse::<i64>().ok().unwrap_or_default()).collect();
+                    let filter = match filter_type {
+                        EQ => Filter::eq(filter_a, filter_b),
+                        LT => Filter::lt(filter_a, filter_b),
+                        GT => Filter::gt(filter_a, filter_b),
+                        GTE => Filter::gte(filter_a, filter_b),
+                        LTE => Filter::lte(filter_a, filter_b),
+                        IN => Filter::isin(filter_a, filter_b),
+                        _ => {
+                            warn!("unsupported filter: {}", filter_type);
+                            return false
+                        }
+                    };
+                    q.filter(filter);
+                }
         } else {
-            let filter_b = ri.unwrap();
+            // string
             let filter = match filter_type {
                 EQ => Filter::eq(filter_a, filter_b),
                 LT => Filter::lt(filter_a, filter_b),
