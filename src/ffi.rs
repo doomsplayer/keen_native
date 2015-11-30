@@ -118,7 +118,7 @@ pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *
                 .map(|c| c.trim())
                 .find(|c| c.starts_with('"') && c.ends_with('"')).is_some() {
                     // string vec
-                    let iter = filter_b.split(',').map(|c| c.trim());
+                    let iter = filter_b.split(',').map(|c| c.trim().trim_matches('"'));
                     let filter_b: Vec<_> = iter.collect();
                     let filter = match filter_type {
                         EQ => Filter::eq(filter_a, filter_b),
