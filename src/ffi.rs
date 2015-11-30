@@ -344,10 +344,27 @@ pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, v
         }
         ResultType::ITEMS => {
             let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
-            let mut r: KeenCacheResult<i64> = r.select((key, StringOrI64::String(value.into())));
-            r.tt();
-            return unsafe { transmute(Box::into_raw(Box::new(r))) }
+            match to {
+                DAYSITEMS | DAYSPOD => {
+                    warn!("cannot select to Days<_>");
+                    return ptr::null()
+                }
+                ITEMS => {
+                    let mut r: KeenCacheResult<Items> = r.select((key, StringOrI64::String(value.into())));
+                    r.tt();
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
+                }
+                POD => {
+                    let mut r: KeenCacheResult<i64> = r.select((key, StringOrI64::String(value.into())));
+                    r.tt();
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
+                }
+                _ => {
+                    warn!("target data type unexpected: {}", to);
+                    return ptr::null()
+                }
             }
+        }
         ResultType::DAYSPOD => {
             warn!("cannot select on Days<i64>");
             return ptr::null()

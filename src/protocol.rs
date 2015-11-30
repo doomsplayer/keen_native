@@ -396,6 +396,19 @@ impl Select<i64> for KeenResult<Items> {
     }
 }
 
+impl Select<Items> for KeenResult<Items> {
+    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<Items> {
+        let ret: Vec<_> = timeit! {
+            self.result.0.into_iter().filter(|i| {
+                i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+            }).collect(), "transform - select"
+        };
+        KeenResult {
+            result: Items(ret)
+        }
+    }
+}
+
 impl Select<i64> for KeenResult<Days<Items>> {
     fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
         let mut sum = 0;
