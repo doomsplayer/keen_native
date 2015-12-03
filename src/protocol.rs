@@ -401,6 +401,9 @@ impl Select<Items> for KeenResult<Items> {
         let ret: Vec<_> = timeit! {
             self.result.0.into_iter().filter(|i| {
                 i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
+            }).map(|mut i| {
+                i.fields.remove(predicate.0);
+                i
             }).collect(), "transform - select"
         };
         KeenResult {
@@ -466,6 +469,18 @@ impl<C> Range<Days<C>> for KeenResult<Days<C>> {
             from <= d.timeframe.start.parse().ok().unwrap_or(UTC::now()) &&
                 d.timeframe.end.parse().ok().unwrap_or(UTC::now())  <= to
         }), "transform - range");
+        self
+    }
+}
+
+pub trait Merge<O> {
+    fn merge(self, rhs: KeenResult<O>) -> KeenResult<O>;
+}
+
+impl Merge<Days<i64>> for KeenResult<Days<i64>> {
+    fn merge(mut self, mut rhs: KeenResult<Days<i64>>) -> KeenResult<Days<i64>> {
+        self.result.append(&mut rhs.result);
+        self.result.sort_by(|a, b| a.timeframe.start.cmp(&b.timeframe.start));
         self
     }
 }
