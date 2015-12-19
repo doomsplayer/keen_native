@@ -11,7 +11,8 @@ use std::mem::transmute;
 use std::ptr;
 use std::ffi::CString;
 
-fn with<T,F,R>(c: *mut T, f: F) -> R
+// leak
+fn with<T, F, R>(c: *mut T, f: F) -> R
     where F: for<'a> FnOnce(&'a mut T) -> R
 {
     let mut client = unsafe { Box::from_raw(c) };
@@ -46,11 +47,17 @@ pub extern "C" fn set_timeout(c: *mut KeenCacheClient, sec: c_int) -> bool {
     })
 }
 
-const COUNT: c_int = 0;
-const COUNT_UNIQUE: c_int = 1;
+pub const COUNT: c_int = 0;
+pub const COUNT_UNIQUE: c_int = 1;
 
 #[no_mangle]
-pub extern "C" fn query<'a>(c: *mut KeenCacheClient, metric_type: c_int, metric_target: *mut c_char, collection: *mut c_char, start: *mut c_char, end: *mut c_char) -> *const KeenCacheQuery<'a> {
+pub extern "C" fn query<'a>(c: *mut KeenCacheClient,
+                            metric_type: c_int,
+                            metric_target: *mut c_char,
+                            collection: *mut c_char,
+                            start: *mut c_char,
+                            end: *mut c_char)
+                            -> *const KeenCacheQuery<'a> {
     with(c, |c| {
         let metric = match metric_type {
             COUNT => Metric::Count,
@@ -58,14 +65,16 @@ pub extern "C" fn query<'a>(c: *mut KeenCacheClient, metric_type: c_int, metric_
                 let target = unsafe { CStr::from_ptr(metric_target).to_str().unwrap() };
                 Metric::CountUnique(target.into())
             }
-            _ => unimplemented!()
+            _ => unimplemented!(),
         };
         let collection = unsafe { CStr::from_ptr(collection).to_str().unwrap() };
         let start = unsafe { CStr::from_ptr(start).to_str().unwrap() };
         let end = unsafe { CStr::from_ptr(end).to_str().unwrap() };
         let start = start.parse().unwrap_or(UTC::now());
         let end = end.parse().unwrap_or(UTC::now());
-        let q = unsafe {transmute(c.query(metric, collection.into(), TimeFrame::Absolute(start,end)))};
+        let q = unsafe {
+            transmute(c.query(metric, collection.into(), TimeFrame::Absolute(start, end)))
+        };
         Box::into_raw(Box::new(q))
     })
 }
@@ -79,100 +88,92 @@ pub extern "C" fn group_by(q: *mut KeenCacheQuery, group: *mut c_char) -> bool {
     })
 }
 
-const EQ: c_int = 0;
-const LT: c_int = 1;
-const GT: c_int = 2;
-const LTE: c_int = 3;
-const GTE: c_int = 4;
-const IN: c_int = 5;
-const NE: c_int = 6;
+pub const EQ: c_int = 0;
+pub const LT: c_int = 1;
+pub const GT: c_int = 2;
+pub const LTE: c_int = 3;
+pub const GTE: c_int = 4;
+pub const IN: c_int = 5;
+pub const NE: c_int = 6;
+
+fn gen_filter<U>(filter_a: &str, filter_b: U, filter_type: c_int) -> Option<Filter>
+    where U: ToFilterValue
+{
+    let filter = match filter_type {
+        EQ => Filter::eq(filter_a, filter_b),
+        LT => Filter::lt(filter_a, filter_b),
+        GT => Filter::gt(filter_a, filter_b),
+        GTE => Filter::gte(filter_a, filter_b),
+        LTE => Filter::lte(filter_a, filter_b),
+        IN => Filter::isin(filter_a, filter_b),
+        NE => Filter::ne(filter_a, filter_b),
+        _ => {
+            warn!("unsupported filter: {}", filter_type);
+            return None;
+        }
+    };
+    return Some(filter);
+}
 
 #[no_mangle]
-pub extern "C" fn filter(q: *mut KeenCacheQuery, filter_type: c_int, filter_a: *mut c_char, filter_b: *mut c_char) -> bool {
+pub extern "C" fn filter(q: *mut KeenCacheQuery,
+                         filter_type: c_int,
+                         filter_a: *mut c_char,
+                         filter_b: *mut c_char)
+                         -> bool {
     with(q, |q| {
         let filter_a = unsafe { CStr::from_ptr(filter_a).to_str().unwrap() };
-        let filter_b = unsafe { CStr::from_ptr(filter_b).to_str().unwrap()};
+        let filter_b = unsafe { CStr::from_ptr(filter_b).to_str().unwrap() };
         if let Ok(i) = filter_b.parse() {
             // int
             let filter_b: i64 = i;
-            let filter = match filter_type {
-                EQ => Filter::eq(filter_a, filter_b),
-                LT => Filter::lt(filter_a, filter_b),
-                GT => Filter::gt(filter_a, filter_b),
-                GTE => Filter::gte(filter_a, filter_b),
-                LTE => Filter::lte(filter_a, filter_b),
-                IN => Filter::isin(filter_a, filter_b),
-                NE => Filter::ne(filter_a, filter_b),
-                _ => {
-                    warn!("unsupported filter: {}", filter_type);
-                    return false
-                }
-            };
-            q.filter(filter);
+            if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
+                q.filter(filter);
+                return true;
+            } else {
+                return false;
+            }
         } else if filter_b.ends_with(']') && filter_b.starts_with('[') {
             // vec
             let filter_b = filter_b.trim_matches('[').trim_matches(']');
 
-            if filter_b
-                .split(',')
-                .map(|c| c.trim())
-                .find(|c| c.starts_with('"') && c.ends_with('"')).is_some() {
-                    // string vec
-                    let iter = filter_b.split(',').map(|c| c.trim().trim_matches('"'));
-                    let filter_b: Vec<_> = iter.collect();
-                    let filter = match filter_type {
-                        EQ => Filter::eq(filter_a, filter_b),
-                        LT => Filter::lt(filter_a, filter_b),
-                        GT => Filter::gt(filter_a, filter_b),
-                        GTE => Filter::gte(filter_a, filter_b),
-                        LTE => Filter::lte(filter_a, filter_b),
-                        IN => Filter::isin(filter_a, filter_b),
-                        NE => Filter::ne(filter_a, filter_b),
-                        _ => {
-                            warn!("unsupported filter: {}", filter_type);
-                            return false
-                        }
-                    };
+            if filter_b.split(',')
+                       .map(|c| c.trim())
+                       .find(|c| c.starts_with('"') && c.ends_with('"'))
+                       .is_some() {
+                // string vec
+                let iter = filter_b.split(',').map(|c| c.trim().trim_matches('"'));
+                let filter_b: Vec<_> = iter.collect();
+                if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
                     q.filter(filter);
+                    return true;
                 } else {
-                    // int vec
-                    let iter = filter_b.split(',').map(|c| c.trim());
-                    let filter_b: Vec<_> = iter.map(|c| c.parse::<i64>().ok().unwrap_or_default()).collect();
-                    let filter = match filter_type {
-                        EQ => Filter::eq(filter_a, filter_b),
-                        LT => Filter::lt(filter_a, filter_b),
-                        GT => Filter::gt(filter_a, filter_b),
-                        GTE => Filter::gte(filter_a, filter_b),
-                        LTE => Filter::lte(filter_a, filter_b),
-                        IN => Filter::isin(filter_a, filter_b),
-                        NE => Filter::ne(filter_a, filter_b),
-                        _ => {
-                            warn!("unsupported filter: {}", filter_type);
-                            return false
-                        }
-                    };
-                    q.filter(filter);
+                    return false;
                 }
+            } else {
+                // int vec
+                let iter = filter_b.split(',').map(|c| c.trim());
+                let filter_b: Vec<_> = iter.map(|c| c.parse::<i64>().ok().unwrap_or_default())
+                                           .collect();
+                if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
+                    q.filter(filter);
+                    return true;
+                } else {
+                    return false;
+                }
+            }
         } else {
             // string
-            let filter = match filter_type {
-                EQ => Filter::eq(filter_a, filter_b),
-                LT => Filter::lt(filter_a, filter_b),
-                GT => Filter::gt(filter_a, filter_b),
-                GTE => Filter::gte(filter_a, filter_b),
-                LTE => Filter::lte(filter_a, filter_b),
-                IN => Filter::isin(filter_a, filter_b),
-                NE => Filter::ne(filter_a, filter_b),
-                _ => {
-                    warn!("unsupported filter: {}", filter_type);
-                    return false
-                }
-            };
-            q.filter(filter);
+            if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
+                q.filter(filter);
+                return true;
+            } else {
+                return false;
+            }
         }
-        true
     })
 }
+
 const MINUTELY: c_int = 0;
 const HOURLY: c_int = 1;
 const DAILY: c_int = 2;
@@ -192,20 +193,20 @@ pub extern "C" fn interval(q: *mut KeenCacheQuery, interval: c_int) -> bool {
             YEARLY => q.interval(Interval::Yearly),
             _ => {
                 warn!("unsupported interval: {}", interval);
-                return false
+                return false;
             }
         }
         true
     })
 }
 
-const POD: c_int = 0;
-const ITEMS: c_int = 1;
-const DAYSPOD: c_int = 2;
-const DAYSITEMS: c_int = 3;
+pub const POD: c_int = 0;
+pub const ITEMS: c_int = 1;
+pub const DAYSPOD: c_int = 2;
+pub const DAYSITEMS: c_int = 3;
 
 #[no_mangle]
-pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCacheResult<'a,()> {
+pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCacheResult<'a, ()> {
     let q = unsafe { Box::from_raw(q) };
     let r = match tp {
         POD => {
@@ -213,7 +214,7 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
                 Ok(s) => s,
                 Err(e) => {
                     warn!("data type can not be converted to: target: i64, {}", e);
-                    return ptr::null()
+                    return ptr::null();
                 }
             };
             r.tt();
@@ -224,7 +225,7 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
                 Ok(s) => s,
                 Err(e) => {
                     warn!("data type can not be converted to: target: Items, {}", e);
-                    return ptr::null()
+                    return ptr::null();
                 }
             };
             r.tt();
@@ -234,8 +235,9 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
             let mut r: KeenCacheResult<Days<i64>> = match q.data() {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!("data type can not be converted to: target: Days<i64>, {}", e);
-                    return ptr::null()
+                    warn!("data type can not be converted to: target: Days<i64>, {}",
+                          e);
+                    return ptr::null();
                 }
             };
             r.tt();
@@ -245,8 +247,9 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
             let mut r: KeenCacheResult<Days<Items>> = match q.data() {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!("data type can not be converted to: target: Days<Items>, {}", e);
-                    return ptr::null()
+                    warn!("data type can not be converted to: target: Days<Items>, {}",
+                          e);
+                    return ptr::null();
                 }
             };
             r.tt();
@@ -254,31 +257,34 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
         }
         _ => {
             warn!("unsupported type: {}", tp);
-            return ptr::null()
+            return ptr::null();
         }
     };
     r
 }
 
 #[no_mangle]
-pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a,()>, to: c_int) -> *const KeenCacheResult<'a, ()> {
+pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a, ()>,
+                                 to: c_int)
+                                 -> *const KeenCacheResult<'a, ()> {
     let r = unsafe { Box::from_raw(r) };
-    match r.type_tag{
+    match r.type_tag {
         ResultType::POD => {
+            let _: Box<KeenCacheResult<Items>> = unsafe { transmute(r) }; // we need to transmute it or there will be leak
             warn!("cannot convert pod");
-            return ptr::null()
+            return ptr::null();
         }
         ResultType::ITEMS => {
             let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
             let mut r: KeenCacheResult<i64> = r.accumulate();
             r.tt();
-            return unsafe { transmute(Box::into_raw(Box::new(r))) }
+            return unsafe { transmute(Box::into_raw(Box::new(r))) };
         }
         ResultType::DAYSPOD => {
             let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
             let mut r: KeenCacheResult<i64> = r.accumulate();
             r.tt();
-            return unsafe {transmute(Box::into_raw(Box::new(r)))}
+            return unsafe { transmute(Box::into_raw(Box::new(r))) };
         }
         ResultType::DAYSITEMS => {
             let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
@@ -286,16 +292,16 @@ pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a,()>, to: c_int) -> *
                 DAYSPOD => {
                     let mut r: KeenCacheResult<Days<i64>> = r.accumulate();
                     r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
-                },
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
+                }
                 POD => {
                     let mut r: KeenCacheResult<i64> = r.accumulate();
                     r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
-                },
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
+                }
                 _ => {
                     warn!("target type cannot be converted to: {}", to);
-                    return ptr::null()
+                    return ptr::null();
                 }
             }
         }
@@ -303,93 +309,109 @@ pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a,()>, to: c_int) -> *
 }
 
 #[no_mangle]
-pub extern "C" fn range<'a>(r: *mut KeenCacheResult<'a,()>, from: *mut c_char, to: *mut c_char) -> *const KeenCacheResult<'a, ()> {
+pub extern "C" fn range<'a>(r: *mut KeenCacheResult<'a, ()>,
+                            from: *mut c_char,
+                            to: *mut c_char)
+                            -> *const KeenCacheResult<'a, ()> {
     let from = unsafe { CStr::from_ptr(from).to_str().unwrap() };
     let to = unsafe { CStr::from_ptr(to).to_str().unwrap() };
     let from = from.parse().unwrap();
     let to = to.parse().unwrap();
 
     let r = unsafe { Box::from_raw(r) };
-    match r.type_tag{
+    match r.type_tag {
         ResultType::POD => {
+            let _: Box<KeenCacheResult<i64>> = unsafe { transmute(r) };
             warn!("cannot use range on pod");
-            return ptr::null()
+            return ptr::null();
         }
         ResultType::ITEMS => {
+            let _: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
             warn!("cannot use range on items");
-            return ptr::null()
+            return ptr::null();
         }
         ResultType::DAYSPOD => {
             let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
             let r = r.range(from, to);
-            return unsafe {transmute(Box::into_raw(Box::new(r)))}
+            return unsafe { transmute(Box::into_raw(Box::new(r))) };
         }
         ResultType::DAYSITEMS => {
             let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
             let r = r.range(from, to);
-            return unsafe {transmute(Box::into_raw(Box::new(r)))}
+            return unsafe { transmute(Box::into_raw(Box::new(r))) };
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, value: *mut c_char, to: c_int) -> *const KeenCacheResult<'a, ()> {
+pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a, ()>,
+                             key: *mut c_char,
+                             value: *mut c_char,
+                             to: c_int)
+                             -> *const KeenCacheResult<'a, ()> {
     let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
     let value = unsafe { CStr::from_ptr(value).to_str().unwrap() };
     let r = unsafe { Box::from_raw(r) };
     match r.type_tag {
         ResultType::POD => {
+            let _: Box<KeenCacheResult<i64>> = unsafe { transmute(r) };
             warn!("cannot select on pod");
-            return ptr::null()
+            return ptr::null();
         }
         ResultType::ITEMS => {
             let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
             match to {
                 DAYSITEMS | DAYSPOD => {
                     warn!("cannot select to Days<_>");
-                    return ptr::null()
+                    return ptr::null();
                 }
                 ITEMS => {
-                    let mut r: KeenCacheResult<Items> = r.select((key, StringOrI64::String(value.into())));
+                    let mut r: KeenCacheResult<Items> =
+                        r.select((key, StringOrI64::String(value.into())));
                     r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
                 }
                 POD => {
-                    let mut r: KeenCacheResult<i64> = r.select((key, StringOrI64::String(value.into())));
+                    let mut r: KeenCacheResult<i64> = r.select((key,
+                                                                StringOrI64::String(value.into())));
                     r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
                 }
                 _ => {
                     warn!("target data type unexpected: {}", to);
-                    return ptr::null()
+                    return ptr::null();
                 }
             }
         }
         ResultType::DAYSPOD => {
+            let _: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
             warn!("cannot select on Days<i64>");
-            return ptr::null()
+            return ptr::null();
         }
         ResultType::DAYSITEMS => {
             let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
             match to {
                 DAYSITEMS => {
-                    let mut r: KeenCacheResult<Days<Items>> = r.select((key, StringOrI64::String(value.into())));
+                    let mut r: KeenCacheResult<Days<Items>> =
+                        r.select((key, StringOrI64::String(value.into())));
                     r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
-                },
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
+                }
                 POD => {
-                    let mut r: KeenCacheResult<i64> = r.select((key, StringOrI64::String(value.into())));
+                    let mut r: KeenCacheResult<i64> = r.select((key,
+                                                                StringOrI64::String(value.into())));
                     r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
-                },
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
+                }
                 DAYSPOD => {
-                    let mut r: KeenCacheResult<Days<i64>> = r.select((key, StringOrI64::String(value.into())));
+                    let mut r: KeenCacheResult<Days<i64>> =
+                        r.select((key, StringOrI64::String(value.into())));
                     r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) }
+                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
                 }
                 _ => {
                     warn!("target type cannot be converted to: {}", to);
-                    return ptr::null()
+                    return ptr::null();
                 }
             }
         }
@@ -397,29 +419,40 @@ pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, v
 }
 
 #[no_mangle]
-pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a,()>, key: *mut c_char, expire: c_int) -> bool {
+pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a, ()>,
+                               key: *mut c_char,
+                               expire: c_int)
+                               -> bool {
     let expire = expire as u64;
     with(r, |r| {
         let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
         let result = match r.type_tag {
-            ResultType::POD => unsafe { transmute::<_, &mut KeenCacheResult<'a, i64>>(r).to_redis(key, expire) },
-            ResultType::DAYSITEMS => unsafe { transmute::<_, &mut KeenCacheResult<'a, Days<Items>>>(r).to_redis(key, expire) },
-            ResultType::DAYSPOD => unsafe { transmute::<_, &mut KeenCacheResult<'a, Days<i64>>>(r).to_redis(key, expire) },
-            ResultType::ITEMS => unsafe { transmute::<_, &mut KeenCacheResult<'a, Items>>(r).to_redis(key, expire) },
+            ResultType::POD => unsafe {
+                transmute::<_, &mut KeenCacheResult<'a, i64>>(r).to_redis(key, expire)
+            },
+            ResultType::DAYSITEMS => unsafe {
+                transmute::<_, &mut KeenCacheResult<'a, Days<Items>>>(r).to_redis(key, expire)
+            },
+            ResultType::DAYSPOD => unsafe {
+                transmute::<_, &mut KeenCacheResult<'a, Days<i64>>>(r).to_redis(key, expire)
+            },
+            ResultType::ITEMS => unsafe {
+                transmute::<_, &mut KeenCacheResult<'a, Items>>(r).to_redis(key, expire)
+            },
         };
 
         if result.is_err() {
             warn!("to_redis error: {}", result.unwrap_err());
-            return false
+            return false;
         } else {
-            return true
+            return true;
         }
     })
 }
 
 #[no_mangle]
-pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<'a,()>) {
-    let ri = unsafe {Box::from_raw(r)};
+pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<'a, ()>) {
+    let ri = unsafe { Box::from_raw(r) };
     match ri.type_tag {
         ResultType::POD => {
             let r = r as *mut KeenCacheResult<'a, i64>;
@@ -442,8 +475,8 @@ pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<'a,()>) {
 }
 
 #[no_mangle]
-pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a,()>) -> *const c_char {
-    let r = unsafe {Box::from_raw(r)};
+pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a, ()>) -> *const c_char {
+    let r = unsafe { Box::from_raw(r) };
     info!("get data from result: found tag: {:?}", r.type_tag);
 
     // *KeenCacheResult destructed here
@@ -471,7 +504,10 @@ pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a,()>) -> *const c_ch
 }
 
 #[no_mangle]
-pub extern "C" fn from_redis<'a>(url: *const c_char, key: *const c_char, tp: c_int) -> *const KeenCacheResult<'a,()> {
+pub extern "C" fn from_redis<'a>(url: *const c_char,
+                                 key: *const c_char,
+                                 tp: c_int)
+                                 -> *const KeenCacheResult<'a, ()> {
     let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
     let url = unsafe { CStr::from_ptr(url).to_str().unwrap() };
     match tp {
@@ -480,7 +516,7 @@ pub extern "C" fn from_redis<'a>(url: *const c_char, key: *const c_char, tp: c_i
                 Ok(o) => o,
                 Err(e) => {
                     println!("{}", e);
-                    return ptr::null()
+                    return ptr::null();
                 }
             };
             r.tt();
@@ -491,29 +527,31 @@ pub extern "C" fn from_redis<'a>(url: *const c_char, key: *const c_char, tp: c_i
                 Ok(o) => o,
                 Err(e) => {
                     println!("{}", e);
-                    return ptr::null()
+                    return ptr::null();
                 }
             };
             r.tt();
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
         DAYSPOD => {
-            let mut r: KeenCacheResult<'a, Days<i64>> = match KeenCacheResult::from_redis(url, key) {
+            let mut r: KeenCacheResult<'a, Days<i64>> = match KeenCacheResult::from_redis(url,
+                                                                                          key) {
                 Ok(o) => o,
                 Err(e) => {
                     println!("{}", e);
-                    return ptr::null()
+                    return ptr::null();
                 }
             };
             r.tt();
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
         DAYSITEMS => {
-            let mut r: KeenCacheResult<'a, Days<Items>> = match KeenCacheResult::from_redis(url, key) {
+            let mut r: KeenCacheResult<'a, Days<Items>> = match KeenCacheResult::from_redis(url,
+                                                                                            key) {
                 Ok(o) => o,
                 Err(e) => {
                     println!("{}", e);
-                    return ptr::null()
+                    return ptr::null();
                 }
             };
             r.tt();
@@ -521,19 +559,20 @@ pub extern "C" fn from_redis<'a>(url: *const c_char, key: *const c_char, tp: c_i
         }
         _ => {
             println!("unsupported type {}", tp);
-            return ptr::null()
+            return ptr::null();
         }
     }
 }
 
 
 // lazy_static! {
-//     static ref SPIDER_FILTER: Filter = Filter::ne("parsed_user_agent.device.family", "Spider");
+// static ref SPIDER_FILTER: Filter =
+// Filter::ne("parsed_user_agent.device.family", "Spider");
 // }
 
 #[no_mangle]
 pub extern "C" fn dealloc_str(s: *mut c_char) {
-    unsafe {CString::from_raw(s)};
+    unsafe { CString::from_raw(s) };
 }
 
 

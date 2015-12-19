@@ -7,7 +7,7 @@ use std::fmt::Formatter;
 use std::fmt::Display;
 use std::collections::BTreeMap;
 use serde::de::Visitor;
-use std::ops::{Deref,DerefMut};
+use std::ops::{Deref, DerefMut};
 use chrono::DateTime;
 use chrono::UTC;
 
@@ -30,78 +30,83 @@ pub type Days<I> = Vec<Day<I>>;
 //   KeenResult<Vec<Day<Vec<Item>>>> same as above
 #[derive(Debug)]
 pub struct KeenResult<C> {
-    result: C
+    result: C,
 }
 
-impl<C> Deserialize for KeenResult<C> where C: Deserialize {
-    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResult<C>, D::Error> where D: Deserializer {
+impl<C> Deserialize for KeenResult<C> where C: Deserialize
+{
+    fn deserialize<D>(deserializer: &mut D) -> Result<KeenResult<C>, D::Error>
+        where D: Deserializer
+    {
         let mut bt: BTreeMap<String, C> = try!(BTreeMap::deserialize(deserializer));
         if let Some(result) = bt.remove("result") {
-            Ok(KeenResult {
-                result: result
-            })
+            Ok(KeenResult { result: result })
         } else {
             Err(D::Error::missing_field("result"))
         }
     }
 }
 
-impl<C> Serialize for KeenResult<C> where C: Serialize {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+impl<C> Serialize for KeenResult<C> where C: Serialize
+{
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         use serde::ser::impls::MapIteratorVisitor;
-        serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(), Some(1)))
+        serializer.visit_map(MapIteratorVisitor::new(vec![("result", &self.result)].into_iter(),
+                                                     Some(1)))
     }
 }
 
 #[derive(Debug)]
 pub struct Day<V> {
     value: V,
-    timeframe: Timeframe
+    timeframe: Timeframe,
 }
 
-impl<V> Deserialize for Day<V> where V: Deserialize {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Day<V>, D::Error> where D: Deserializer {
+impl<V> Deserialize for Day<V> where V: Deserialize
+{
+    fn deserialize<D>(deserializer: &mut D) -> Result<Day<V>, D::Error>
+        where D: Deserializer
+    {
         let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
         let value = get_field!(object, "value");
         let timeframe = get_field!(object, "timeframe");
 
         Ok(Day {
             value: value,
-            timeframe: timeframe
+            timeframe: timeframe,
         })
     }
 }
 
-impl<V> Serialize for Day<V> where V: Serialize {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+impl<V> Serialize for Day<V> where V: Serialize
+{
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         use serde::ser::impls::MapIteratorVisitor;
-        serializer.visit_map(MapIteratorVisitor::new(
-            vec![("value", to_value(&self.value)),
-                ("timeframe", to_value(&self.timeframe))].into_iter(), Some(2)))
+        serializer.visit_map(MapIteratorVisitor::new(vec![("value", to_value(&self.value)),
+                                                          ("timeframe",
+                                                           to_value(&self.timeframe))]
+                                                         .into_iter(),
+                                                     Some(2)))
     }
 }
 
 #[derive(Debug,Clone)]
 pub enum StringOrI64 {
     String(String),
-    I64(i64)
+    I64(i64),
 }
 
 impl PartialEq for StringOrI64 {
     fn eq(&self, other: &StringOrI64) -> bool {
         match (self, other) {
-            (&StringOrI64::I64(i), &StringOrI64::I64(j)) => {
-                i == j
-            }
-            (&StringOrI64::I64(i), &StringOrI64::String(ref j)) => {
-                format!("{}", i) == &j[..]
-            }
-            (&StringOrI64::String(ref i), &StringOrI64::I64(j)) => {
-                &i[..] == format!("{}", j)
-            }
-            (&StringOrI64::String(ref i), &StringOrI64::String(ref j)) => {
-                i == j
-            }
+            (&StringOrI64::I64(i), &StringOrI64::I64(j)) => i == j,
+            (&StringOrI64::I64(i), &StringOrI64::String(ref j)) => format!("{}", i) == &j[..],
+            (&StringOrI64::String(ref i), &StringOrI64::I64(j)) => &i[..] == format!("{}", j),
+            (&StringOrI64::String(ref i), &StringOrI64::String(ref j)) => i == j,
         }
     }
 }
@@ -109,56 +114,84 @@ impl PartialEq for StringOrI64 {
 struct StringOrI64Visitor;
 impl Visitor for StringOrI64Visitor {
     type Value = StringOrI64;
-    fn visit_i8<E>(&mut self, value: i8) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_i8<E>(&mut self, value: i8) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_i16<E>(&mut self, value: i16) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_i16<E>(&mut self, value: i16) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_i32<E>(&mut self, value: i32) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_i32<E>(&mut self, value: i32) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_i64<E>(&mut self, value: i64) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_i64<E>(&mut self, value: i64) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         Ok(StringOrI64::I64(value))
     }
-    fn visit_isize<E>(&mut self, value: isize) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_isize<E>(&mut self, value: isize) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_u8<E>(&mut self, value: u8) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_u8<E>(&mut self, value: u8) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_u16<E>(&mut self, value: u16) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_u16<E>(&mut self, value: u16) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_u32<E>(&mut self, value: u32) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_u32<E>(&mut self, value: u32) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_u64<E>(&mut self, value: u64) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_u64<E>(&mut self, value: u64) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         Ok(StringOrI64::I64(value as i64))
     }
-    fn visit_usize<E>(&mut self, value: usize) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_usize<E>(&mut self, value: usize) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         self.visit_i64(value as i64)
     }
-    fn visit_str<E>(&mut self, value: &str) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_str<E>(&mut self, value: &str) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         Ok(StringOrI64::String(value.into()))
     }
-    fn visit_string<E>(&mut self, value: String) -> Result<StringOrI64, E> where E: SerdeError {
+    fn visit_string<E>(&mut self, value: String) -> Result<StringOrI64, E>
+        where E: SerdeError
+    {
         Ok(StringOrI64::String(value))
     }
 }
 
 impl Deserialize for StringOrI64 {
-    fn deserialize<D>(deserializer: &mut D) -> Result<StringOrI64, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<StringOrI64, D::Error>
+        where D: Deserializer
+    {
         let value: StringOrI64 = try!(deserializer.visit(StringOrI64Visitor));
         Ok(value)
     }
 }
 
 impl Serialize for StringOrI64 {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         match self {
             &StringOrI64::String(ref s) => serializer.visit_str(s),
-            &StringOrI64::I64(i) => serializer.visit_i64(i)
+            &StringOrI64::I64(i) => serializer.visit_i64(i),
         }
     }
 }
@@ -179,7 +212,9 @@ impl DerefMut for Items {
 }
 
 impl Deserialize for Items {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Items, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Items, D::Error>
+        where D: Deserializer
+    {
         let mut v = try!(Vec::<Item>::deserialize(deserializer));
         v.retain(|i| i.result != 0);
         Ok(Items(v))
@@ -187,7 +222,9 @@ impl Deserialize for Items {
 }
 
 impl Serialize for Items {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         self.0.serialize(serializer)
     }
 }
@@ -198,44 +235,50 @@ impl CompressedFields {
     fn get(&self, key: &str) -> Option<StringOrI64> {
         use serde_json::from_str;
         let g: Result<BTreeMap<String, StringOrI64>, _> = from_str(&self.0);
-        g.ok().and_then(|bt| {
-            bt.get(key).map(|s| s.clone())
-        })
+        g.ok().and_then(|bt| bt.get(key).map(|s| s.clone()))
     }
     fn remove(&mut self, key: &str) {
-        use serde_json::{from_str,to_string};
+        use serde_json::{from_str, to_string};
         let g: Result<BTreeMap<String, StringOrI64>, _> = from_str(&self.0);
-        self.0 = g.ok().and_then(|mut bt| {
-            bt.remove(key);
-            to_string(&bt).ok()
-        }).unwrap_or_default();
+        self.0 = g.ok()
+                  .and_then(|mut bt| {
+                      bt.remove(key);
+                      to_string(&bt).ok()
+                  })
+                  .unwrap_or_default();
     }
 }
 
 #[derive(Debug)]
 pub struct Item {
     result: u64,
-    fields: CompressedFields
+    fields: CompressedFields,
 }
 // BTreeMap<String, StringOrI64>
 impl Deserialize for Item {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Item, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Item, D::Error>
+        where D: Deserializer
+    {
         use serde_json::ser::to_string;
         let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
-        let result = try!(object.remove("result").and_then(|v| v.as_u64()).ok_or(D::Error::missing_field("no such field: result")));
+        let result = try!(object.remove("result")
+                                .and_then(|v| v.as_u64())
+                                .ok_or(D::Error::missing_field("no such field: result")));
 
         let fields = to_string(&object).unwrap();
 
         let page = Item {
             result: result,
-            fields: CompressedFields(fields)
+            fields: CompressedFields(fields),
         };
         Ok(page)
     }
 }
 
 impl Serialize for Item {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         use serde_json::from_str;
         let mut object: BTreeMap<String, Value> = from_str(&self.fields.0).ok().unwrap_or_default();
         object.insert("result".to_owned(), Value::I64(self.result as i64));
@@ -246,42 +289,53 @@ impl Serialize for Item {
 #[derive(Debug)]
 struct Timeframe {
     start: String,
-    end: String
+    end: String,
 }
 
 impl Deserialize for Timeframe {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Timeframe, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Timeframe, D::Error>
+        where D: Deserializer
+    {
         let mut object: BTreeMap<String, String> = try!(BTreeMap::deserialize(deserializer));
-        let start = try!(object.remove("start").ok_or(D::Error::missing_field("no such field: start")));
+        let start = try!(object.remove("start")
+                               .ok_or(D::Error::missing_field("no such field: start")));
         let end = try!(object.remove("end").ok_or(D::Error::missing_field("no such field: end")));
 
         Ok(Timeframe {
             start: start,
-            end: end
+            end: end,
         })
     }
 }
 
 impl Serialize for Timeframe {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         use serde::ser::impls::MapIteratorVisitor;
-        serializer.visit_map(MapIteratorVisitor::new(
-            vec![("start", self.start.clone()), ("end", self.end.clone())].into_iter(), Some(2)))
+        serializer.visit_map(MapIteratorVisitor::new(vec![("start", self.start.clone()),
+                                                          ("end", self.end.clone())]
+                                                         .into_iter(),
+                                                     Some(2)))
     }
 }
 
 #[derive(Debug)]
 pub struct KeenError {
     message: String,
-    error_code: String
+    error_code: String,
 }
 
 impl Deserialize for KeenError {
-    fn deserialize<D>(deserializer: &mut D) -> Result<KeenError, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<KeenError, D::Error>
+        where D: Deserializer
+    {
         let mut object: BTreeMap<String, String> = try!(BTreeMap::deserialize(deserializer));
         Ok(KeenError {
-            message: try!(object.remove("message").ok_or(D::Error::missing_field("no such field: message"))),
-            error_code: try!(object.remove("error_code").ok_or(D::Error::missing_field("no such field: error_code")))
+            message: try!(object.remove("message")
+                                .ok_or(D::Error::missing_field("no such field: message"))),
+            error_code: try!(object.remove("error_code")
+                                   .ok_or(D::Error::missing_field("no such field: error_code"))),
         })
     }
 }
@@ -317,9 +371,7 @@ impl Accumulate<i64> for KeenResult<Items> {
                 sum += item.result as i64;
             }, "transform - timeit"
         }
-        KeenResult {
-            result: sum
-        }
+        KeenResult { result: sum }
     }
 }
 
@@ -331,9 +383,7 @@ impl Accumulate<i64> for KeenResult<Days<i64>> {
                 sum += day.value as i64;
             }, "transform - accumulate"
         }
-        KeenResult {
-            result: sum
-        }
+        KeenResult { result: sum }
     }
 }
 impl Accumulate<Days<i64>> for KeenResult<Days<Items>> {
@@ -351,9 +401,7 @@ impl Accumulate<Days<i64>> for KeenResult<Days<Items>> {
                 }
             }).collect(), "transform - accumulate"
         };
-        KeenResult {
-            result: ret
-        }
+        KeenResult { result: ret }
     }
 }
 
@@ -373,9 +421,7 @@ impl Accumulate<i64> for KeenResult<Days<Items>> {
                 }
             }, "transform - accumulate"
         }
-        KeenResult {
-            result: sum
-        }
+        KeenResult { result: sum }
     }
 }
 
@@ -390,9 +436,7 @@ impl Select<i64> for KeenResult<Items> {
                 i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
             }).map(|i| i.result).unwrap_or(0), "transform - select"
         };
-        KeenResult {
-            result: ret as i64
-        }
+        KeenResult { result: ret as i64 }
     }
 }
 
@@ -406,9 +450,7 @@ impl Select<Items> for KeenResult<Items> {
                 i
             }).collect(), "transform - select"
         };
-        KeenResult {
-            result: Items(ret)
-        }
+        KeenResult { result: Items(ret) }
     }
 }
 
@@ -422,9 +464,7 @@ impl Select<i64> for KeenResult<Days<Items>> {
                 }).map(|i| i.result as i64).unwrap_or(0);
             }, "transform - select"
         }
-        KeenResult {
-            result: sum
-        }
+        KeenResult { result: sum }
     }
 }
 
@@ -466,9 +506,10 @@ pub trait Range<O> {
 impl<C> Range<Days<C>> for KeenResult<Days<C>> {
     fn range(mut self, from: DateTime<UTC>, to: DateTime<UTC>) -> KeenResult<Days<C>> {
         timeit!(self.result.retain(|d| {
-            from <= d.timeframe.start.parse().ok().unwrap_or(UTC::now()) &&
-                d.timeframe.end.parse().ok().unwrap_or(UTC::now())  <= to
-        }), "transform - range");
+                    from <= d.timeframe.start.parse().ok().unwrap_or(UTC::now()) &&
+                    d.timeframe.end.parse().ok().unwrap_or(UTC::now()) <= to
+                }),
+                "transform - range");
         self
     }
 }

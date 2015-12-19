@@ -20,7 +20,9 @@ fn main() {
     client.set_timeout(time::Duration::new(30, 0));
     let metric = Metric::Count;
 
-    let mut q = client.query(metric.clone(), "strikingly_pageviews".into(), TimeFrame::Absolute(UTC::now() - Duration::days(7), UTC::now()));
+    let mut q = client.query(metric.clone(),
+                             "strikingly_pageviews".into(),
+                             TimeFrame::Absolute(UTC::now() - Duration::days(7), UTC::now()));
     q.filter(Filter::gt("pageId", 300));
     q.filter(Filter::lt("pageId", 400));
     q.interval(Interval::Daily);
@@ -31,4 +33,3 @@ fn main() {
     let s: String = d.to_string();
     println!("{:?}", s);
 }
-

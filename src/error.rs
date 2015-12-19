@@ -55,5 +55,3 @@ impl Error for NativeError {
 }
 
 pub type NativeResult<T> = Result<T, NativeError>;
-
-

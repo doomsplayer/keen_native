@@ -6,11 +6,14 @@ extern crate libc;
 extern crate redis;
 extern crate keen;
 extern crate env_logger;
-#[macro_use] extern crate wrapped_enum;
-#[macro_use] extern crate lazy_static;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate wrapped_enum;
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate log;
 
-#[macro_use] mod client;
+#[macro_use]mod client;
 mod error;
 mod protocol;
 mod cache;

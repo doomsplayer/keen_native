@@ -6,10 +6,12 @@ pub fn open_redis(url: &str) -> NativeResult<Connection> {
     Ok(try!(RedisClient::open(&url[..]).and_then(|client| client.get_connection())))
 }
 
-// pub fn generate_redis_key(metric: &str, target: Option<&str>, from: &str, to: &str, interval: Option<Interval>, bound: Option<(usize, usize)>) -> String {
+// pub fn generate_redis_key(metric: &str, target: Option<&str>, from: &str,
+// to: &str, interval: Option<Interval>, bound: Option<(usize, usize)>) ->
+// String {
 //     let mut s = "".to_owned();
 
-//     s.push_str(metric);
+// s.push_str(metric);
 
 //     target.map(|c| {
 //         s.push('.');
