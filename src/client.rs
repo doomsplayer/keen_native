@@ -94,6 +94,8 @@ impl<'a> KeenCacheQuery<'a> {
             let e: KeenError = try!(from_reader(resp));
             return Err(NativeError::KeenError(e));
         }
+        timeit!(&resp.url, "resp url is");
+
         let ret = KeenCacheResult {
             data: try!(timeit!(from_reader(resp), "decode data from reader")),
             redis: self.redis.clone(),
