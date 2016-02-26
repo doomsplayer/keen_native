@@ -1,6 +1,5 @@
 extern crate rustc_serialize;
 extern crate keenio_booster as booster;
-extern crate docopt;
 extern crate chrono;
 extern crate env_logger;
 extern crate keen;

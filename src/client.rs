@@ -84,6 +84,9 @@ impl<'a> KeenCacheQuery<'a> {
     pub fn max_age(&mut self, age: usize) {
         self.query.max_age(age);
     }
+    pub fn other(&mut self, key: &str, value: &str) {
+        self.query.other(key, value);
+    }
     pub fn data<C>(&self) -> NativeResult<KeenCacheResult<C>>
         where C: Deserialize
     {

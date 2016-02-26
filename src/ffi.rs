@@ -200,6 +200,16 @@ pub extern "C" fn interval(q: *mut KeenCacheQuery, interval: c_int) -> bool {
     })
 }
 
+#[no_mangle]
+pub extern "C" fn other(q: *mut KeenCacheQuery, key: *mut c_char, value: *mut c_char) -> bool {
+    with(q, |q| {
+        let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
+        let value = unsafe { CStr::from_ptr(value).to_str().unwrap() };
+        q.other(key, value);
+        true
+    })
+}
+
 pub const POD: c_int = 0;
 pub const ITEMS: c_int = 1;
 pub const DAYSPOD: c_int = 2;
@@ -563,12 +573,6 @@ pub extern "C" fn from_redis<'a>(url: *const c_char,
         }
     }
 }
-
-
-// lazy_static! {
-// static ref SPIDER_FILTER: Filter =
-// Filter::ne("parsed_user_agent.device.family", "Spider");
-// }
 
 #[no_mangle]
 pub extern "C" fn dealloc_str(s: *mut c_char) {
