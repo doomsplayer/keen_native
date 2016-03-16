@@ -13,6 +13,7 @@ use error::NativeError;
 use hyper::status::StatusCode;
 use redis::Connection;
 use redis::Commands;
+use redis::Client as RedisClient;
 use chrono::DateTime;
 
 macro_rules! timeit {
@@ -36,7 +37,7 @@ macro_rules! timeit {
 
 pub struct KeenCacheClient {
     client: KeenClient,
-    redis: Option<Connection>,
+    redis: Option<RedisClient>,
 }
 
 impl KeenCacheClient {
@@ -61,14 +62,14 @@ impl KeenCacheClient {
                  -> KeenCacheQuery {
         KeenCacheQuery {
             query: self.client.query(metric, collection, timeframe),
-            redis: self.redis.as_ref(),
+            redis: self.redis.clone(),
         }
     }
 }
 
 pub struct KeenCacheQuery<'a> {
     query: KeenQuery<'a>,
-    redis: Option<&'a Connection>,
+    redis: Option<RedisClient>,
 }
 
 impl<'a> KeenCacheQuery<'a> {
@@ -99,9 +100,15 @@ impl<'a> KeenCacheQuery<'a> {
         }
         info!("response from keenio's url is: {}", resp.url);
 
+        let connection = if let Some(ref client) = self.redis {
+            Some(try!(client.get_connection()))
+        } else {
+            None
+        };
+
         let ret = KeenCacheResult {
             data: try!(timeit!(from_reader(resp), "decode data from reader")),
-            redis: self.redis.clone(),
+            redis: connection,
             type_tag: ResultType::POD,
         };
         Ok(ret)
@@ -116,36 +123,36 @@ pub enum ResultType {
     DAYSITEMS = 3,
 }
 
-pub struct KeenCacheResult<'a, C> {
+pub struct KeenCacheResult<C> {
     pub type_tag: ResultType, // this is for ffi use, so it will be set in ffi module
     data: KeenResult<C>,
-    redis: Option<&'a Connection>,
+    redis: Option<Connection>,
 }
 
-impl<'a> KeenCacheResult<'a, i64> {
+impl KeenCacheResult<i64> {
     pub fn tt(&mut self) {
         self.type_tag = ResultType::POD
     }
 }
-impl<'a> KeenCacheResult<'a, Items> {
+impl KeenCacheResult<Items> {
     pub fn tt(&mut self) {
         self.type_tag = ResultType::ITEMS
     }
 }
-impl<'a> KeenCacheResult<'a, Days<i64>> {
+impl KeenCacheResult<Days<i64>> {
     pub fn tt(&mut self) {
         self.type_tag = ResultType::DAYSPOD
     }
 }
-impl<'a> KeenCacheResult<'a, Days<Items>> {
+impl KeenCacheResult<Days<Items>> {
     pub fn tt(&mut self) {
         self.type_tag = ResultType::DAYSITEMS
     }
 }
 
-impl<'a, C> KeenCacheResult<'a, C> where C: Deserialize
+impl<C> KeenCacheResult<C> where C: Deserialize
 {
-    pub fn from_redis(url: &str, key: &str) -> NativeResult<KeenCacheResult<'a, C>> {
+    pub fn from_redis(url: &str, key: &str) -> NativeResult<KeenCacheResult<C>> {
         let c = try!(open_redis(url));
         let s: String = try!(timeit!(c.get(key), "get data from redis"));
         let result = try!(timeit!(from_str(&s), "decode data from redis"));
@@ -157,8 +164,8 @@ impl<'a, C> KeenCacheResult<'a, C> where C: Deserialize
     }
 }
 
-impl<'a, C> KeenCacheResult<'a, Days<C>> {
-    pub fn range(self, from: DateTime<UTC>, to: DateTime<UTC>) -> KeenCacheResult<'a, Days<C>> {
+impl<C> KeenCacheResult<Days<C>> {
+    pub fn range(self, from: DateTime<UTC>, to: DateTime<UTC>) -> KeenCacheResult<Days<C>> {
         let r = KeenCacheResult {
             data: self.data.range(from, to),
             redis: self.redis,
@@ -167,9 +174,9 @@ impl<'a, C> KeenCacheResult<'a, Days<C>> {
         r
     }
 }
-impl<'a, C> KeenCacheResult<'a, C> where C: Serialize
+impl<C> KeenCacheResult<C> where C: Serialize
 {
-    pub fn accumulate<O>(self) -> KeenCacheResult<'a, O>
+    pub fn accumulate<O>(self) -> KeenCacheResult<O>
         where KeenResult<C>: Accumulate<O>
     {
         let r = KeenCacheResult {
@@ -179,7 +186,7 @@ impl<'a, C> KeenCacheResult<'a, C> where C: Serialize
         };
         r
     }
-    pub fn select<O>(self, predicate: (&str, StringOrI64)) -> KeenCacheResult<'a, O>
+    pub fn select<O>(self, predicate: (&str, StringOrI64)) -> KeenCacheResult<O>
         where KeenResult<C>: Select<O>
     {
         let r = KeenCacheResult {
@@ -192,8 +199,8 @@ impl<'a, C> KeenCacheResult<'a, C> where C: Serialize
     pub fn to_redis(&self, key: &str, expire: u64) -> NativeResult<()> {
         let bin = try!(to_string(&self.data));
         if self.redis.is_some() {
-            let _ = try!(self.redis.unwrap().set(&key[..], bin));
-            let _ = try!(self.redis.unwrap().expire(&key[..], expire as usize));
+            let _ = try!(self.redis.as_ref().unwrap().set(&key[..], bin));
+            let _ = try!(self.redis.as_ref().unwrap().expire(&key[..], expire as usize));
         }
         Ok(())
     }

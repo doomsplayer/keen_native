@@ -2,8 +2,8 @@ use redis::Client as RedisClient;
 use redis::Connection;
 use error::NativeResult;
 
-pub fn open_redis(url: &str) -> NativeResult<Connection> {
-    Ok(try!(RedisClient::open(&url[..]).and_then(|client| client.get_connection())))
+pub fn open_redis(url: &str) -> NativeResult<RedisClient> {
+    Ok(try!(RedisClient::open(&url[..])))
 }
 
 // pub fn generate_redis_key(metric: &str, target: Option<&str>, from: &str,

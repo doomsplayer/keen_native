@@ -1,3 +1,4 @@
+#![feature(type_ascription)]
 extern crate rustc_serialize;
 extern crate keenio_booster as booster;
 extern crate chrono;
@@ -10,6 +11,10 @@ use std::time;
 use booster::*;
 
 fn main() {
+    let mut arg = env::args();
+    arg.next();
+    let from = arg.next().unwrap();
+    let to = arg.next().unwrap();
     let _ = env_logger::init().unwrap();
 
     let key = env::var("KEEN_READ_KEY").unwrap();
@@ -17,18 +22,24 @@ fn main() {
     let mut client = KeenCacheClient::new(&key, &proj);
     let _ = client.set_redis("redis://127.0.0.1").unwrap();
     client.set_timeout(time::Duration::new(30, 0));
-    let metric = Metric::Count;
+    let metric = Metric::CountUnique("ip_address".into());
 
     let mut q = client.query(metric.clone(),
                              "strikingly_pageviews".into(),
-                             TimeFrame::Absolute(UTC::now() - Duration::days(7), UTC::now()));
-    q.filter(Filter::gt("pageId", 300));
-    q.filter(Filter::lt("pageId", 400));
-    q.interval(Interval::Daily);
+                             TimeFrame::Absolute(UTC::now() - Duration::hours(2), UTC::now() - Duration::hours(1)));
+    q.filter(Filter::gt("pageId", from.parse().unwrap(): i64));
+    q.filter(Filter::lt("pageId", to.parse().unwrap(): i64));
     q.group_by("normalized_referrer");
+    q.group_by("ip_geo_info.country");
+    q.group_by("parsed_user_agent.os.family");
     q.group_by("pageId");
-    let d: KeenCacheResult<Days<Items>> = q.data().unwrap();
-    let d: KeenCacheResult<Days<i64>> = d.accumulate();
-    let s: String = d.to_string();
-    println!("{:?}", s);
+    match q.data(): Result<KeenCacheResult<Items>, _> {
+        Ok(d) => {
+            let s: String = d.to_string();
+            //println!("{:?}", s);
+        }
+        Err(e) => {
+            println!("{:?}", e);
+        }
+    }
 }

@@ -216,7 +216,7 @@ pub const DAYSPOD: c_int = 2;
 pub const DAYSITEMS: c_int = 3;
 
 #[no_mangle]
-pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCacheResult<'a, ()> {
+pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCacheResult<()> {
     let q = unsafe { Box::from_raw(q) };
     let r = match tp {
         POD => {
@@ -274,9 +274,9 @@ pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCach
 }
 
 #[no_mangle]
-pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a, ()>,
+pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<()>,
                                  to: c_int)
-                                 -> *const KeenCacheResult<'a, ()> {
+                                 -> *const KeenCacheResult<()> {
     let r = unsafe { Box::from_raw(r) };
     match r.type_tag {
         ResultType::POD => {
@@ -319,10 +319,10 @@ pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<'a, ()>,
 }
 
 #[no_mangle]
-pub extern "C" fn range<'a>(r: *mut KeenCacheResult<'a, ()>,
+pub extern "C" fn range<'a>(r: *mut KeenCacheResult<()>,
                             from: *mut c_char,
                             to: *mut c_char)
-                            -> *const KeenCacheResult<'a, ()> {
+                            -> *const KeenCacheResult<()> {
     let from = unsafe { CStr::from_ptr(from).to_str().unwrap() };
     let to = unsafe { CStr::from_ptr(to).to_str().unwrap() };
     let from = from.parse().unwrap();
@@ -354,11 +354,11 @@ pub extern "C" fn range<'a>(r: *mut KeenCacheResult<'a, ()>,
 }
 
 #[no_mangle]
-pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a, ()>,
+pub extern "C" fn select<'a>(r: *mut KeenCacheResult<()>,
                              key: *mut c_char,
                              value: *mut c_char,
                              to: c_int)
-                             -> *const KeenCacheResult<'a, ()> {
+                             -> *const KeenCacheResult<()> {
     let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
     let value = unsafe { CStr::from_ptr(value).to_str().unwrap() };
     let r = unsafe { Box::from_raw(r) };
@@ -429,7 +429,7 @@ pub extern "C" fn select<'a>(r: *mut KeenCacheResult<'a, ()>,
 }
 
 #[no_mangle]
-pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a, ()>,
+pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<()>,
                                key: *mut c_char,
                                expire: c_int)
                                -> bool {
@@ -438,16 +438,16 @@ pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a, ()>,
         let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
         let result = match r.type_tag {
             ResultType::POD => unsafe {
-                transmute::<_, &mut KeenCacheResult<'a, i64>>(r).to_redis(key, expire)
+                transmute::<_, &mut KeenCacheResult<i64>>(r).to_redis(key, expire)
             },
             ResultType::DAYSITEMS => unsafe {
-                transmute::<_, &mut KeenCacheResult<'a, Days<Items>>>(r).to_redis(key, expire)
+                transmute::<_, &mut KeenCacheResult<Days<Items>>>(r).to_redis(key, expire)
             },
             ResultType::DAYSPOD => unsafe {
-                transmute::<_, &mut KeenCacheResult<'a, Days<i64>>>(r).to_redis(key, expire)
+                transmute::<_, &mut KeenCacheResult<Days<i64>>>(r).to_redis(key, expire)
             },
             ResultType::ITEMS => unsafe {
-                transmute::<_, &mut KeenCacheResult<'a, Items>>(r).to_redis(key, expire)
+                transmute::<_, &mut KeenCacheResult<Items>>(r).to_redis(key, expire)
             },
         };
 
@@ -461,23 +461,23 @@ pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<'a, ()>,
 }
 
 #[no_mangle]
-pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<'a, ()>) {
+pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<()>) {
     let ri = unsafe { Box::from_raw(r) };
     match ri.type_tag {
         ResultType::POD => {
-            let r = r as *mut KeenCacheResult<'a, i64>;
+            let r = r as *mut KeenCacheResult<i64>;
             let _ = unsafe { Box::from_raw(r) };
         }
         ResultType::DAYSITEMS => {
-            let r = r as *mut KeenCacheResult<'a, Days<Items>>;
+            let r = r as *mut KeenCacheResult<Days<Items>>;
             let _ = unsafe { Box::from_raw(r) };
         }
         ResultType::DAYSPOD => {
-            let r = r as *mut KeenCacheResult<'a, Days<i64>>;
+            let r = r as *mut KeenCacheResult<Days<i64>>;
             let _ = unsafe { Box::from_raw(r) };
         }
         ResultType::ITEMS => {
-            let r = r as *mut KeenCacheResult<'a, Items>;
+            let r = r as *mut KeenCacheResult<Items>;
             let _ = unsafe { Box::from_raw(r) };
         }
     }
@@ -485,26 +485,26 @@ pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<'a, ()>) {
 }
 
 #[no_mangle]
-pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a, ()>) -> *const c_char {
+pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<()>) -> *const c_char {
     let r = unsafe { Box::from_raw(r) };
     info!("get data from result: found tag: {:?}", r.type_tag);
 
     // *KeenCacheResult destructed here
     let s: String = match r.type_tag {
         ResultType::POD => {
-            let r: Box<KeenCacheResult<'a, i64>> = unsafe { transmute(r) };
+            let r: Box<KeenCacheResult<i64>> = unsafe { transmute(r) };
             r.to_string()
         }
         ResultType::DAYSITEMS => {
-            let r: Box<KeenCacheResult<'a, Days<Items>>> = unsafe { transmute(r) };
+            let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
             r.to_string()
         }
         ResultType::DAYSPOD => {
-            let r: Box<KeenCacheResult<'a, Days<i64>>> = unsafe { transmute(r) };
+            let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
             r.to_string()
         }
         ResultType::ITEMS => {
-            let r: Box<KeenCacheResult<'a, Items>> = unsafe { transmute(r) };
+            let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
             r.to_string()
         }
     };
@@ -517,12 +517,12 @@ pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<'a, ()>) -> *const c_c
 pub extern "C" fn from_redis<'a>(url: *const c_char,
                                  key: *const c_char,
                                  tp: c_int)
-                                 -> *const KeenCacheResult<'a, ()> {
+                                 -> *const KeenCacheResult<()> {
     let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
     let url = unsafe { CStr::from_ptr(url).to_str().unwrap() };
     match tp {
         POD => {
-            let mut r: KeenCacheResult<'a, i64> = match KeenCacheResult::from_redis(url, key) {
+            let mut r: KeenCacheResult<i64> = match KeenCacheResult::from_redis(url, key) {
                 Ok(o) => o,
                 Err(e) => {
                     println!("{}", e);
@@ -533,7 +533,7 @@ pub extern "C" fn from_redis<'a>(url: *const c_char,
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
         ITEMS => {
-            let mut r: KeenCacheResult<'a, Items> = match KeenCacheResult::from_redis(url, key) {
+            let mut r: KeenCacheResult<Items> = match KeenCacheResult::from_redis(url, key) {
                 Ok(o) => o,
                 Err(e) => {
                     println!("{}", e);
@@ -544,7 +544,7 @@ pub extern "C" fn from_redis<'a>(url: *const c_char,
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
         DAYSPOD => {
-            let mut r: KeenCacheResult<'a, Days<i64>> = match KeenCacheResult::from_redis(url,
+            let mut r: KeenCacheResult<Days<i64>> = match KeenCacheResult::from_redis(url,
                                                                                           key) {
                 Ok(o) => o,
                 Err(e) => {
@@ -556,7 +556,7 @@ pub extern "C" fn from_redis<'a>(url: *const c_char,
             unsafe { transmute(Box::into_raw(Box::new(r))) }
         }
         DAYSITEMS => {
-            let mut r: KeenCacheResult<'a, Days<Items>> = match KeenCacheResult::from_redis(url,
+            let mut r: KeenCacheResult<Days<Items>> = match KeenCacheResult::from_redis(url,
                                                                                             key) {
                 Ok(o) => o,
                 Err(e) => {
