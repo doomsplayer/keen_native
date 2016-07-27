@@ -445,9 +445,6 @@ impl Select<Items> for KeenResult<Items> {
         let ret: Vec<_> = timeit! {
             self.result.0.into_iter().filter(|i| {
                 i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
-            }).map(|mut i| {
-                i.fields.remove(predicate.0);
-                i
             }).collect(), "transform - select"
         };
         KeenResult { result: Items(ret) }
