@@ -23,10 +23,3 @@ mod ffi;
 pub use ffi::*;
 pub use client::*;
 pub use protocol::*;
-
-
-pub fn logger() {
-    std::env::set_var("RUST_LOG", "keenio_batch=info");
-    std::env::set_var("RUST_BACKTRACE", "1");
-    let _ = env_logger::init();
-}
