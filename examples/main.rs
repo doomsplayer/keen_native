@@ -1,6 +1,5 @@
-#![feature(type_ascription)]
 extern crate rustc_serialize;
-extern crate keenio_booster as booster;
+extern crate keenio_batch as booster;
 extern crate chrono;
 extern crate env_logger;
 extern crate keen;
@@ -26,7 +25,8 @@ fn main() {
 
     let mut q = client.query(metric.clone(),
                              "strikingly_pageviews".into(),
-                             TimeFrame::Absolute(UTC::now() - Duration::hours(2), UTC::now() - Duration::hours(1)));
+                             TimeFrame::Absolute(UTC::now() - Duration::hours(2),
+                                                 UTC::now() - Duration::hours(1)));
     q.filter(Filter::gt("pageId", from.parse().unwrap(): i64));
     q.filter(Filter::lt("pageId", to.parse().unwrap(): i64));
     q.group_by("normalized_referrer");
@@ -36,7 +36,7 @@ fn main() {
     match q.data(): Result<KeenCacheResult<Items>, _> {
         Ok(d) => {
             let s: String = d.to_string();
-            //println!("{:?}", s);
+            // println!("{:?}", s);
         }
         Err(e) => {
             println!("{:?}", e);

@@ -1,91 +1,143 @@
-use client::*;
-use keen::*;
-use std::ffi::CStr;
+use std::ptr;
+use std::ffi::{CString, CStr};
+use std::any::Any;
+use std::time::Duration;
+use std::sync::Mutex;
+use std::cell::RefCell;
+use std::error::Error as StdError;
+
 use libc::c_char;
 use libc::c_int;
-use std::mem::forget;
-use error::NativeResult;
+
+use keen::*;
 use protocol::*;
 use chrono::UTC;
-use std::mem::transmute;
-use std::ptr;
-use std::ffi::CString;
 
-// leak
-fn with<T, F, R>(c: *mut T, f: F) -> R
-    where F: for<'a> FnOnce(&'a mut T) -> R
-{
-    let mut client = unsafe { Box::from_raw(c) };
-    let result = f(&mut client);
-    forget(client);
-    result
+use client::*;
+use errors::{Error, Result};
+
+macro_rules! cstr {
+    ($var: expr) => (unsafe { CStr::from_ptr($var).to_str().unwrap() })
+}
+
+lazy_static!{
+    static ref ERROR: Mutex<RefCell<Option<String>>> = Mutex::new(RefCell::new(None));
+}
+
+fn set_global_error(e: Error) {
+    let l = ERROR.lock().unwrap();
+    *l.borrow_mut() = Some(format!("{}", e.description()));
+}
+
+// it is FFIBox(*mut Box<T>)
+#[repr(C)]
+pub struct FFICacheClient(*mut Box<Any>);
+
+impl FFICacheClient {
+    fn new(t: KeenCacheClient) -> FFICacheClient {
+        FFICacheClient(Box::into_raw(Box::new(Box::new(t) as Box<Any>)))
+    }
+    fn as_mut(&mut self) -> &mut KeenCacheClient {
+        (unsafe { &mut *self.0 }).downcast_mut::<KeenCacheClient>().unwrap()
+    }
+    fn drop(self) {
+        unsafe { Box::from_raw(self.0) };
+    }
+}
+
+impl From<KeenCacheClient> for FFICacheClient {
+    fn from(r: KeenCacheClient) -> Self {
+        Self::new(r)
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn new(key: *mut c_char, project: *mut c_char) -> *const KeenCacheClient {
-    let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
-    let project = unsafe { CStr::from_ptr(project).to_str().unwrap() };
-    Box::into_raw(Box::new(KeenCacheClient::new(key, project)))
+pub extern "C" fn new_client(key: *mut c_char, project: *mut c_char) -> FFICacheClient {
+    let key = cstr!(key);
+    let project = cstr!(project);
+    KeenCacheClient::new(key, project).into()
 }
 
 #[no_mangle]
-pub extern "C" fn set_redis(c: *mut KeenCacheClient, url: *mut c_char) -> bool {
-    with(c, |client| {
-        let url = unsafe { CStr::from_ptr(url).to_str().unwrap() };
-        let result: NativeResult<()> = client.set_redis(url);
-        result.is_ok()
-    })
+pub extern "C" fn set_redis(mut c: FFICacheClient, url: *mut c_char) -> bool {
+    let url = cstr!(url);
+    let result: Result<()> = c.as_mut().set_redis(url);
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            set_global_error(e);
+            false
+        }
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn set_timeout(c: *mut KeenCacheClient, sec: c_int) -> bool {
-    use std::time::Duration;
-    with(c, |c| {
-        let d = Duration::new(sec as u64, 0);
-        c.set_timeout(d);
-        true
-    })
+pub extern "C" fn set_timeout(mut c: FFICacheClient, sec: c_int) -> bool {
+    c.as_mut().set_timeout(Duration::new(sec as u64, 0));
+    true
+}
+
+
+// it is FFIBox(*mut Box<T>)
+#[repr(C)]
+pub struct FFICacheQuery(*mut Box<Any>);
+
+impl FFICacheQuery {
+    fn new(t: KeenCacheQuery) -> FFICacheQuery {
+        FFICacheQuery(Box::into_raw(Box::new(Box::new(t) as Box<Any>)))
+    }
+    fn null() -> FFICacheQuery {
+        FFICacheQuery(ptr::null_mut())
+    }
+    fn as_mut(&mut self) -> &mut KeenCacheQuery {
+        (unsafe { &mut *self.0 }).downcast_mut::<KeenCacheQuery>().unwrap()
+    }
+    fn as_ref(&self) -> &KeenCacheQuery {
+        (unsafe { &*self.0 }).downcast_ref::<KeenCacheQuery>().unwrap()
+    }
+    fn drop(self) {
+        unsafe { Box::from_raw(self.0) };
+    }
+}
+
+impl From<KeenCacheQuery> for FFICacheQuery {
+    fn from(r: KeenCacheQuery) -> Self {
+        Self::new(r)
+    }
 }
 
 pub const COUNT: c_int = 0;
 pub const COUNT_UNIQUE: c_int = 1;
 
 #[no_mangle]
-pub extern "C" fn query<'a>(c: *mut KeenCacheClient,
+pub extern "C" fn new_query(mut c: FFICacheClient,
                             metric_type: c_int,
                             metric_target: *mut c_char,
                             collection: *mut c_char,
                             start: *mut c_char,
                             end: *mut c_char)
-                            -> *const KeenCacheQuery<'a> {
-    with(c, |c| {
-        let metric = match metric_type {
-            COUNT => Metric::Count,
-            COUNT_UNIQUE => {
-                let target = unsafe { CStr::from_ptr(metric_target).to_str().unwrap() };
-                Metric::CountUnique(target.into())
-            }
-            _ => unimplemented!(),
-        };
-        let collection = unsafe { CStr::from_ptr(collection).to_str().unwrap() };
-        let start = unsafe { CStr::from_ptr(start).to_str().unwrap() };
-        let end = unsafe { CStr::from_ptr(end).to_str().unwrap() };
-        let start = start.parse().unwrap_or(UTC::now());
-        let end = end.parse().unwrap_or(UTC::now());
-        let q = unsafe {
-            transmute(c.query(metric, collection.into(), TimeFrame::Absolute(start, end)))
-        };
-        Box::into_raw(Box::new(q))
-    })
+                            -> FFICacheQuery {
+
+    let metric = match metric_type {
+        COUNT => Metric::Count,
+        COUNT_UNIQUE => Metric::CountUnique(cstr!(metric_target).into()),
+        _ => {
+            set_global_error(format!("unsupported metric type '{}'", metric_type).into());
+            return FFICacheQuery::null();
+        }
+    };
+    let collection = cstr!(collection);
+    let start = cstr!(start).parse().unwrap_or(UTC::now());
+    let end = cstr!(end).parse().unwrap_or(UTC::now());
+    let query = c.as_mut().query(metric, collection.into(), TimeFrame::Absolute(start, end));
+    query.into()
 }
 
 #[no_mangle]
-pub extern "C" fn group_by(q: *mut KeenCacheQuery, group: *mut c_char) -> bool {
-    with(q, |q| {
-        let group = unsafe { CStr::from_ptr(group).to_str().unwrap() };
-        q.group_by(group);
-        true
-    })
+pub extern "C" fn group_by(mut q: FFICacheQuery, group: *mut c_char) -> bool {
+    let group = cstr!(group);
+    q.as_mut().group_by(group);
+    true
 }
 
 pub const EQ: c_int = 0;
@@ -96,7 +148,7 @@ pub const GTE: c_int = 4;
 pub const IN: c_int = 5;
 pub const NE: c_int = 6;
 
-fn gen_filter<U>(filter_a: &str, filter_b: U, filter_type: c_int) -> Option<Filter>
+fn gen_filter<U>(filter_a: &str, filter_b: U, filter_type: c_int) -> Result<Filter>
     where U: ToFilterValue
 {
     let filter = match filter_type {
@@ -108,70 +160,84 @@ fn gen_filter<U>(filter_a: &str, filter_b: U, filter_type: c_int) -> Option<Filt
         IN => Filter::isin(filter_a, filter_b),
         NE => Filter::ne(filter_a, filter_b),
         _ => {
-            warn!("unsupported filter: {}", filter_type);
-            return None;
+            return Err(format!("unsupported filter type '{}'", filter_type).into());
         }
     };
-    return Some(filter);
+    return Ok(filter);
 }
 
 #[no_mangle]
-pub extern "C" fn filter(q: *mut KeenCacheQuery,
+pub extern "C" fn filter(mut q: FFICacheQuery,
                          filter_type: c_int,
                          filter_a: *mut c_char,
                          filter_b: *mut c_char)
                          -> bool {
-    with(q, |q| {
-        let filter_a = unsafe { CStr::from_ptr(filter_a).to_str().unwrap() };
-        let filter_b = unsafe { CStr::from_ptr(filter_b).to_str().unwrap() };
-        if let Ok(i) = filter_b.parse() {
-            // int
-            let filter_b: i64 = i;
-            if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
-                q.filter(filter);
+    let filter_a = cstr!(filter_a);
+    let filter_b = cstr!(filter_b);
+    if let Ok(i) = filter_b.parse() {
+        // int
+        let filter_b: i64 = i;
+        match gen_filter(filter_a, filter_b, filter_type) {
+            Ok(filter) => {
+                q.as_mut().filter(filter);
                 return true;
-            } else {
-                return false;
             }
-        } else if filter_b.ends_with(']') && filter_b.starts_with('[') {
-            // vec
-            let filter_b = filter_b.trim_matches('[').trim_matches(']');
-
-            if filter_b.split(',')
-                       .map(|c| c.trim())
-                       .find(|c| c.starts_with('"') && c.ends_with('"'))
-                       .is_some() {
-                // string vec
-                let iter = filter_b.split(',').map(|c| c.trim().trim_matches('"'));
-                let filter_b: Vec<_> = iter.collect();
-                if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
-                    q.filter(filter);
-                    return true;
-                } else {
-                    return false;
-                }
-            } else {
-                // int vec
-                let iter = filter_b.split(',').map(|c| c.trim());
-                let filter_b: Vec<_> = iter.map(|c| c.parse::<i64>().ok().unwrap_or_default())
-                                           .collect();
-                if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
-                    q.filter(filter);
-                    return true;
-                } else {
-                    return false;
-                }
-            }
-        } else {
-            // string
-            if let Some(filter) = gen_filter(filter_a, filter_b, filter_type) {
-                q.filter(filter);
-                return true;
-            } else {
+            Err(e) => {
+                set_global_error(e);
                 return false;
             }
         }
-    })
+    } else if filter_b.ends_with(']') && filter_b.starts_with('[') {
+        // vec
+        let filter_b = filter_b.trim_matches('[').trim_matches(']');
+
+        if filter_b.split(',')
+            .map(|c| c.trim())
+            .find(|c| c.starts_with('"') && c.ends_with('"'))
+            .is_some() {
+            // string vec
+            let iter = filter_b.split(',').map(|c| c.trim().trim_matches('"'));
+            let filter_b: Vec<_> = iter.collect();
+            match gen_filter(filter_a, filter_b, filter_type) {
+                Ok(filter) => {
+                    q.as_mut().filter(filter);
+                    return true;
+                }
+                Err(e) => {
+                    set_global_error(e);
+                    return false;
+                }
+            }
+
+        } else {
+            // int vec
+            let iter = filter_b.split(',').map(|c| c.trim());
+            let filter_b: Vec<_> = iter.map(|c| c.parse::<i64>().ok().unwrap_or_default())
+                .collect();
+            match gen_filter(filter_a, filter_b, filter_type) {
+                Ok(filter) => {
+                    q.as_mut().filter(filter);
+                    return true;
+                }
+                Err(e) => {
+                    set_global_error(e);
+                    return false;
+                }
+            }
+        }
+    } else {
+        // string
+        match gen_filter(filter_a, filter_b, filter_type) {
+            Ok(filter) => {
+                q.as_mut().filter(filter);
+                return true;
+            }
+            Err(e) => {
+                set_global_error(e);
+                return false;
+            }
+        }
+    }
 }
 
 const MINUTELY: c_int = 0;
@@ -182,32 +248,63 @@ const MONTHLY: c_int = 4;
 const YEARLY: c_int = 5;
 
 #[no_mangle]
-pub extern "C" fn interval(q: *mut KeenCacheQuery, interval: c_int) -> bool {
-    with(q, |q| {
-        match interval {
-            MINUTELY => q.interval(Interval::Minutely),
-            HOURLY => q.interval(Interval::Hourly),
-            DAILY => q.interval(Interval::Daily),
-            WEEKLY => q.interval(Interval::Weekly),
-            MONTHLY => q.interval(Interval::Monthly),
-            YEARLY => q.interval(Interval::Yearly),
-            _ => {
-                warn!("unsupported interval: {}", interval);
-                return false;
-            }
+pub extern "C" fn interval(mut q: FFICacheQuery, interval: c_int) -> bool {
+    match interval {
+        MINUTELY => q.as_mut().interval(Interval::Minutely),
+        HOURLY => q.as_mut().interval(Interval::Hourly),
+        DAILY => q.as_mut().interval(Interval::Daily),
+        WEEKLY => q.as_mut().interval(Interval::Weekly),
+        MONTHLY => q.as_mut().interval(Interval::Monthly),
+        YEARLY => q.as_mut().interval(Interval::Yearly),
+        _ => {
+            set_global_error(format!("unsupported interval type '{}'", interval).into());
+            return false;
         }
-        true
-    })
+    }
+    true
 }
 
 #[no_mangle]
-pub extern "C" fn other(q: *mut KeenCacheQuery, key: *mut c_char, value: *mut c_char) -> bool {
-    with(q, |q| {
-        let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
-        let value = unsafe { CStr::from_ptr(value).to_str().unwrap() };
-        q.other(key, value);
-        true
-    })
+pub extern "C" fn other(mut q: FFICacheQuery, key: *mut c_char, value: *mut c_char) -> bool {
+    let key = cstr!(key);
+    let value = cstr!(value);
+    q.as_mut().other(key, value);
+    true
+}
+
+// it is FFIBox(*mut Box<Option<T>>)
+#[repr(C)]
+pub struct FFICacheResult(*mut Box<Any>);
+
+impl FFICacheResult {
+    fn new<T: Any>(t: KeenCacheResult<T>) -> FFICacheResult {
+        FFICacheResult(Box::into_raw(Box::new(Box::new(Some(t)) as Box<Any>)))
+    }
+    fn null() -> FFICacheResult {
+        FFICacheResult(ptr::null_mut())
+    }
+    fn is<T: Any>(&self) -> bool {
+        (unsafe { &mut *self.0 })
+            .downcast_mut::<Option<KeenCacheResult<T>>>()
+            .is_some()
+    }
+    fn take<T: Any>(self) -> Option<KeenCacheResult<T>> {
+        (unsafe { &mut *self.0 })
+            .downcast_mut::<Option<KeenCacheResult<T>>>()
+            .map(|x| x.take().unwrap())
+    }
+}
+
+impl Drop for FFICacheResult {
+    fn drop(&mut self) {
+        unsafe { Box::from_raw(self.0) };
+    }
+}
+
+impl<T: Any> From<KeenCacheResult<T>> for FFICacheResult {
+    fn from(r: KeenCacheResult<T>) -> Self {
+        Self::new(r)
+    }
 }
 
 pub const POD: c_int = 0;
@@ -216,371 +313,314 @@ pub const DAYSPOD: c_int = 2;
 pub const DAYSITEMS: c_int = 3;
 
 #[no_mangle]
-pub extern "C" fn data<'a>(q: *mut KeenCacheQuery, tp: c_int) -> *const KeenCacheResult<()> {
-    let q = unsafe { Box::from_raw(q) };
+pub extern "C" fn send(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
     let r = match tp {
         POD => {
-            let mut r: KeenCacheResult<i64> = match q.data() {
+            let r: KeenCacheResult<i64> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!("data type can not be converted to: target: i64, {}", e);
-                    return ptr::null();
+                    set_global_error(format!("data type can not be converted to i64: '{}'", e)
+                        .into());
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         ITEMS => {
-            let mut r: KeenCacheResult<Items> = match q.data() {
+            let r: KeenCacheResult<Items> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!("data type can not be converted to: target: Items, {}", e);
-                    return ptr::null();
+                    set_global_error(format!("data type can not be converted to Items: '{}'", e)
+                        .into());
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         DAYSPOD => {
-            let mut r: KeenCacheResult<Days<i64>> = match q.data() {
+            let r: KeenCacheResult<Days<i64>> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!("data type can not be converted to: target: Days<i64>, {}",
-                          e);
-                    return ptr::null();
+                    set_global_error(format!("data type can not be converted to Days<i64>: '{}'",
+                                             e)
+                        .into());
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         DAYSITEMS => {
-            let mut r: KeenCacheResult<Days<Items>> = match q.data() {
+            let r: KeenCacheResult<Days<Items>> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!("data type can not be converted to: target: Days<Items>, {}",
-                          e);
-                    return ptr::null();
+                    set_global_error(format!("data type can not be converted to Days<Items>: \
+                                              '{}'",
+                                             e)
+                        .into());
+
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         _ => {
-            warn!("unsupported type: {}", tp);
-            return ptr::null();
+            set_global_error(format!("unsupported type: '{}'", tp).into());
+            return FFICacheResult::null();
         }
     };
     r
 }
 
+// consume
 #[no_mangle]
-pub extern "C" fn accumulate<'a>(r: *mut KeenCacheResult<()>,
-                                 to: c_int)
-                                 -> *const KeenCacheResult<()> {
-    let r = unsafe { Box::from_raw(r) };
-    match r.type_tag {
-        ResultType::POD => {
-            let _: Box<KeenCacheResult<Items>> = unsafe { transmute(r) }; // we need to transmute it or there will be leak
-            warn!("cannot convert pod");
-            return ptr::null();
-        }
-        ResultType::ITEMS => {
-            let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
-            let mut r: KeenCacheResult<i64> = r.accumulate();
-            r.tt();
-            return unsafe { transmute(Box::into_raw(Box::new(r))) };
-        }
-        ResultType::DAYSPOD => {
-            let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
-            let mut r: KeenCacheResult<i64> = r.accumulate();
-            r.tt();
-            return unsafe { transmute(Box::into_raw(Box::new(r))) };
-        }
-        ResultType::DAYSITEMS => {
-            let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
-            match to {
-                DAYSPOD => {
-                    let mut r: KeenCacheResult<Days<i64>> = r.accumulate();
-                    r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
-                }
-                POD => {
-                    let mut r: KeenCacheResult<i64> = r.accumulate();
-                    r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
-                }
-                _ => {
-                    warn!("target type cannot be converted to: {}", to);
-                    return ptr::null();
-                }
+pub extern "C" fn accumulate(r: FFICacheResult, to: c_int) -> FFICacheResult {
+    if r.is::<i64>() {
+        set_global_error(format!("i64 can not be converted to others").into());
+        return FFICacheResult::null();
+    } else if r.is::<Items>() {
+        let r: KeenCacheResult<i64> = r.take::<Items>().unwrap().accumulate();
+        r.into()
+    } else if r.is::<Days<i64>>() {
+        let r: KeenCacheResult<i64> = r.take::<Days<i64>>().unwrap().accumulate();
+        r.into()
+    } else if r.is::<Days<Items>>() {
+        match to {
+            DAYSPOD => {
+                let r: KeenCacheResult<Days<i64>> = r.take::<Days<Items>>().unwrap().accumulate();
+                r.into()
+            }
+            POD => {
+                let r: KeenCacheResult<i64> = r.take::<Days<Items>>().unwrap().accumulate();
+                r.into()
+            }
+            _ => {
+                set_global_error(format!("data type can not be converted to '{}'", to).into());
+                FFICacheResult::null()
             }
         }
+    } else {
+        set_global_error(format!("not a valid target type '{}'", to).into());
+        FFICacheResult::null()
     }
 }
 
+// consume
 #[no_mangle]
-pub extern "C" fn range<'a>(r: *mut KeenCacheResult<()>,
-                            from: *mut c_char,
-                            to: *mut c_char)
-                            -> *const KeenCacheResult<()> {
-    let from = unsafe { CStr::from_ptr(from).to_str().unwrap() };
-    let to = unsafe { CStr::from_ptr(to).to_str().unwrap() };
+pub extern "C" fn range(r: FFICacheResult, from: *mut c_char, to: *mut c_char) -> FFICacheResult {
+    let from = cstr!(from);
+    let to = cstr!(to);
     let from = from.parse().unwrap();
     let to = to.parse().unwrap();
 
-    let r = unsafe { Box::from_raw(r) };
-    match r.type_tag {
-        ResultType::POD => {
-            let _: Box<KeenCacheResult<i64>> = unsafe { transmute(r) };
-            warn!("cannot use range on pod");
-            return ptr::null();
-        }
-        ResultType::ITEMS => {
-            let _: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
-            warn!("cannot use range on items");
-            return ptr::null();
-        }
-        ResultType::DAYSPOD => {
-            let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
-            let r = r.range(from, to);
-            return unsafe { transmute(Box::into_raw(Box::new(r))) };
-        }
-        ResultType::DAYSITEMS => {
-            let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
-            let r = r.range(from, to);
-            return unsafe { transmute(Box::into_raw(Box::new(r))) };
-        }
+    if r.is::<i64>() {
+        set_global_error(format!("i64 can not be converted to others").into());
+        FFICacheResult::null()
+    } else if r.is::<Items>() {
+        set_global_error(format!("Items can not be converted to others").into());
+        FFICacheResult::null()
+    } else if r.is::<Days<i64>>() {
+        let r = r.take::<Days<i64>>().unwrap().range(from, to);
+        r.into()
+    } else if r.is::<Days<Items>>() {
+        let r = r.take::<Days<Items>>().unwrap().range(from, to);
+        r.into()
+    } else {
+        set_global_error(format!("not a valid source type").into());
+        FFICacheResult::null()
     }
 }
 
+// consume
 #[no_mangle]
-pub extern "C" fn select<'a>(r: *mut KeenCacheResult<()>,
-                             key: *mut c_char,
-                             value: *mut c_char,
-                             to: c_int)
-                             -> *const KeenCacheResult<()> {
-    let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
-    let value = unsafe { CStr::from_ptr(value).to_str().unwrap() };
-    let r = unsafe { Box::from_raw(r) };
-    match r.type_tag {
-        ResultType::POD => {
-            let _: Box<KeenCacheResult<i64>> = unsafe { transmute(r) };
-            warn!("cannot select on pod");
-            return ptr::null();
-        }
-        ResultType::ITEMS => {
-            let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
-            match to {
-                DAYSITEMS | DAYSPOD => {
-                    warn!("cannot select to Days<_>");
-                    return ptr::null();
-                }
-                ITEMS => {
-                    let mut r: KeenCacheResult<Items> =
-                        r.select((key, StringOrI64::String(value.into())));
-                    r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
-                }
-                POD => {
-                    let mut r: KeenCacheResult<i64> = r.select((key,
-                                                                StringOrI64::String(value.into())));
-                    r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
-                }
-                _ => {
-                    warn!("target data type unexpected: {}", to);
-                    return ptr::null();
-                }
+pub extern "C" fn select(r: FFICacheResult,
+                         key: *mut c_char,
+                         value: *mut c_char,
+                         to: c_int)
+                         -> FFICacheResult {
+    let key = cstr!(key);
+    let value = cstr!(value);
+    if r.is::<i64>() {
+        set_global_error(format!("i64 not support select").into());
+        FFICacheResult::null()
+    } else if r.is::<Items>() {
+        match to {
+            DAYSITEMS | DAYSPOD => {
+                set_global_error(format!("Items can not be converted to Days<Items> or Days<i64>")
+                    .into());
+                FFICacheResult::null()
+            }
+            ITEMS => {
+                let r: KeenCacheResult<Items> =
+                    r.take::<Items>().unwrap().select((key, StringOrI64::String(value.into())));
+                r.into()
+            }
+            POD => {
+                let r: KeenCacheResult<i64> =
+                    r.take::<Items>().unwrap().select((key, StringOrI64::String(value.into())));
+                r.into()
+            }
+            _ => {
+                set_global_error(format!("not a valid target type '{}'", to).into());
+                FFICacheResult::null()
             }
         }
-        ResultType::DAYSPOD => {
-            let _: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
-            warn!("cannot select on Days<i64>");
-            return ptr::null();
-        }
-        ResultType::DAYSITEMS => {
-            let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
-            match to {
-                DAYSITEMS => {
-                    let mut r: KeenCacheResult<Days<Items>> =
-                        r.select((key, StringOrI64::String(value.into())));
-                    r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
-                }
-                POD => {
-                    let mut r: KeenCacheResult<i64> = r.select((key,
-                                                                StringOrI64::String(value.into())));
-                    r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
-                }
-                DAYSPOD => {
-                    let mut r: KeenCacheResult<Days<i64>> =
-                        r.select((key, StringOrI64::String(value.into())));
-                    r.tt();
-                    return unsafe { transmute(Box::into_raw(Box::new(r))) };
-                }
-                _ => {
-                    warn!("target type cannot be converted to: {}", to);
-                    return ptr::null();
-                }
+    } else if r.is::<Days<i64>>() {
+        set_global_error(format!("i64 not support select").into());
+        FFICacheResult::null()
+    } else if r.is::<Days<Items>>() {
+        match to {
+            DAYSITEMS => {
+                let r: KeenCacheResult<Days<Items>> = r.take::<Days<Items>>()
+                    .unwrap()
+                    .select((key, StringOrI64::String(value.into())));
+                r.into()
+            }
+            POD => {
+                let r: KeenCacheResult<i64> = r.take::<Days<Items>>()
+                    .unwrap()
+                    .select((key, StringOrI64::String(value.into())));
+                r.into()
+            }
+            DAYSPOD => {
+                let r: KeenCacheResult<Days<i64>> = r.take::<Days<Items>>()
+                    .unwrap()
+                    .select((key, StringOrI64::String(value.into())));
+                r.into()
+            }
+            _ => {
+                set_global_error(format!("not a valid target type '{}'", to).into());
+                FFICacheResult::null()
             }
         }
+    } else {
+        set_global_error(format!("not a valid source type").into());
+        FFICacheResult::null()
     }
 }
 
+// consume
 #[no_mangle]
-pub extern "C" fn to_redis<'a>(r: *mut KeenCacheResult<()>,
-                               key: *mut c_char,
-                               expire: c_int)
-                               -> bool {
+pub extern "C" fn to_redis(r: FFICacheResult, key: *mut c_char, expire: c_int) -> bool {
     let expire = expire as u64;
-    with(r, |r| {
-        let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
-        let result = match r.type_tag {
-            ResultType::POD => unsafe {
-                transmute::<_, &mut KeenCacheResult<i64>>(r).to_redis(key, expire)
-            },
-            ResultType::DAYSITEMS => unsafe {
-                transmute::<_, &mut KeenCacheResult<Days<Items>>>(r).to_redis(key, expire)
-            },
-            ResultType::DAYSPOD => unsafe {
-                transmute::<_, &mut KeenCacheResult<Days<i64>>>(r).to_redis(key, expire)
-            },
-            ResultType::ITEMS => unsafe {
-                transmute::<_, &mut KeenCacheResult<Items>>(r).to_redis(key, expire)
-            },
-        };
 
-        if result.is_err() {
-            warn!("to_redis error: {}", result.unwrap_err());
-            return false;
-        } else {
-            return true;
-        }
-    })
-}
+    let key = cstr!(key);
 
-#[no_mangle]
-pub extern "C" fn delete_result<'a>(r: *mut KeenCacheResult<()>) {
-    let ri = unsafe { Box::from_raw(r) };
-    match ri.type_tag {
-        ResultType::POD => {
-            let r = r as *mut KeenCacheResult<i64>;
-            let _ = unsafe { Box::from_raw(r) };
-        }
-        ResultType::DAYSITEMS => {
-            let r = r as *mut KeenCacheResult<Days<Items>>;
-            let _ = unsafe { Box::from_raw(r) };
-        }
-        ResultType::DAYSPOD => {
-            let r = r as *mut KeenCacheResult<Days<i64>>;
-            let _ = unsafe { Box::from_raw(r) };
-        }
-        ResultType::ITEMS => {
-            let r = r as *mut KeenCacheResult<Items>;
-            let _ = unsafe { Box::from_raw(r) };
+    let result = if r.is::<i64>() {
+        r.take::<i64>().unwrap().to_redis(key, expire)
+    } else if r.is::<Items>() {
+        r.take::<Items>().unwrap().to_redis(key, expire)
+    } else if r.is::<Days<i64>>() {
+        r.take::<Days<i64>>().unwrap().to_redis(key, expire)
+    } else if r.is::<Days<Items>>() {
+        r.take::<Days<Items>>().unwrap().to_redis(key, expire)
+    } else {
+        set_global_error(format!("not a valid source type").into());
+        return false;
+    };
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            set_global_error(format!("'{}'", e).into());
+            false
         }
     }
-    forget(ri)
 }
 
 #[no_mangle]
-pub extern "C" fn result_data<'a>(r: *mut KeenCacheResult<()>) -> *const c_char {
-    let r = unsafe { Box::from_raw(r) };
-    info!("get data from result: found tag: {:?}", r.type_tag);
-
-    // *KeenCacheResult destructed here
-    let s: String = match r.type_tag {
-        ResultType::POD => {
-            let r: Box<KeenCacheResult<i64>> = unsafe { transmute(r) };
-            r.to_string()
-        }
-        ResultType::DAYSITEMS => {
-            let r: Box<KeenCacheResult<Days<Items>>> = unsafe { transmute(r) };
-            r.to_string()
-        }
-        ResultType::DAYSPOD => {
-            let r: Box<KeenCacheResult<Days<i64>>> = unsafe { transmute(r) };
-            r.to_string()
-        }
-        ResultType::ITEMS => {
-            let r: Box<KeenCacheResult<Items>> = unsafe { transmute(r) };
-            r.to_string()
-        }
+pub extern "C" fn to_string(r: FFICacheResult) -> *const c_char {
+    let s = if r.is::<i64>() {
+        r.take::<i64>().unwrap().to_string()
+    } else if r.is::<Items>() {
+        r.take::<Items>().unwrap().to_string()
+    } else if r.is::<Days<i64>>() {
+        r.take::<Days<i64>>().unwrap().to_string()
+    } else if r.is::<Days<Items>>() {
+        r.take::<Days<Items>>().unwrap().to_string()
+    } else {
+        set_global_error(format!("not a valid source type").into());
+        return ptr::null();
     };
-
-    let sr = CString::new(s).unwrap().into_raw();
-    sr
+    CString::new(s).unwrap().into_raw()
 }
 
 #[no_mangle]
-pub extern "C" fn from_redis<'a>(url: *const c_char,
-                                 key: *const c_char,
-                                 tp: c_int)
-                                 -> *const KeenCacheResult<()> {
-    let key = unsafe { CStr::from_ptr(key).to_str().unwrap() };
-    let url = unsafe { CStr::from_ptr(url).to_str().unwrap() };
+pub extern "C" fn from_redis(url: *const c_char, key: *const c_char, tp: c_int) -> FFICacheResult {
+    let key = cstr!(key);
+    let url = cstr!(url);
     match tp {
         POD => {
-            let mut r: KeenCacheResult<i64> = match KeenCacheResult::from_redis(url, key) {
+            let r: KeenCacheResult<i64> = match KeenCacheResult::from_redis(url, key) {
                 Ok(o) => o,
                 Err(e) => {
-                    println!("{}", e);
-                    return ptr::null();
+                    set_global_error(e);
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         ITEMS => {
-            let mut r: KeenCacheResult<Items> = match KeenCacheResult::from_redis(url, key) {
+            let r: KeenCacheResult<Items> = match KeenCacheResult::from_redis(url, key) {
                 Ok(o) => o,
                 Err(e) => {
-                    println!("{}", e);
-                    return ptr::null();
+                    set_global_error(e);
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         DAYSPOD => {
-            let mut r: KeenCacheResult<Days<i64>> = match KeenCacheResult::from_redis(url,
-                                                                                          key) {
+            let r: KeenCacheResult<Days<i64>> = match KeenCacheResult::from_redis(url, key) {
                 Ok(o) => o,
                 Err(e) => {
-                    println!("{}", e);
-                    return ptr::null();
+                    set_global_error(e);
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         DAYSITEMS => {
-            let mut r: KeenCacheResult<Days<Items>> = match KeenCacheResult::from_redis(url,
-                                                                                            key) {
+            let r: KeenCacheResult<Days<Items>> = match KeenCacheResult::from_redis(url, key) {
                 Ok(o) => o,
                 Err(e) => {
-                    println!("{}", e);
-                    return ptr::null();
+                    set_global_error(e);
+                    return FFICacheResult::null();
                 }
             };
-            r.tt();
-            unsafe { transmute(Box::into_raw(Box::new(r))) }
+            r.into()
         }
         _ => {
-            println!("unsupported type {}", tp);
-            return ptr::null();
+            set_global_error(format!("not a valid target type '{}'", tp).into());
+            FFICacheResult::null()
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn dealloc_str(s: *mut c_char) {
+pub extern "C" fn free_string(s: *mut c_char) {
     unsafe { CString::from_raw(s) };
 }
 
+// consume
+#[no_mangle]
+pub extern "C" fn free_result(_: FFICacheResult) {}
+
+// consume
+#[no_mangle]
+pub extern "C" fn free_query(q: FFICacheQuery) {
+    q.drop();
+}
+
+// consume
+#[no_mangle]
+pub extern "C" fn free_client(c: FFICacheClient) {
+    c.drop();
+}
 
 #[no_mangle]
-pub extern "C" fn enable_log() {
-    ::logger()
+pub extern "C" fn last_error() -> *mut c_char {
+    let l = ERROR.lock().unwrap();
+    let o = l.borrow_mut()
+        .take();
+    o.map(|e| CString::new(e).unwrap().into_raw())
+        .unwrap_or(0 as *mut _)
 }

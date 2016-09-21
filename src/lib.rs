@@ -7,16 +7,16 @@ extern crate redis;
 extern crate keen;
 extern crate env_logger;
 #[macro_use]
-extern crate wrapped_enum;
+extern crate error_chain;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
 
-#[macro_use]mod client;
-mod error;
+#[macro_use]
+mod client;
+mod errors;
 mod protocol;
-mod cache;
 mod ffi;
 
 #[no_mangle]
@@ -26,7 +26,7 @@ pub use protocol::*;
 
 
 pub fn logger() {
-    std::env::set_var("RUST_LOG", "keenio_booster");
+    std::env::set_var("RUST_LOG", "keenio_batch=info");
     std::env::set_var("RUST_BACKTRACE", "1");
     let _ = env_logger::init();
 }

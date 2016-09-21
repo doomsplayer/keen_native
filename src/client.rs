@@ -1,5 +1,5 @@
 use protocol::*;
-use error::NativeResult;
+use errors::Result;
 use keen::*;
 use std::time::Duration;
 use serde_json::from_reader;
@@ -7,9 +7,7 @@ use serde_json::from_str;
 use serde_json::to_string;
 use serde::Deserialize;
 use serde::Serialize;
-use cache::open_redis;
 use chrono::UTC;
-use error::NativeError;
 use hyper::status::StatusCode;
 use redis::Connection;
 use redis::Commands;
@@ -42,12 +40,13 @@ pub struct KeenCacheClient {
 
 impl KeenCacheClient {
     pub fn new(key: &str, project: &str) -> KeenCacheClient {
+        let _ = ::env_logger::init();
         KeenCacheClient {
             client: KeenClient::new(key, project),
             redis: None,
         }
     }
-    pub fn set_redis(&mut self, url: &str) -> NativeResult<()> {
+    pub fn set_redis(&mut self, url: &str) -> Result<()> {
         let client = try!(open_redis(url));
         self.redis = Some(client);
         Ok(())
@@ -67,12 +66,12 @@ impl KeenCacheClient {
     }
 }
 
-pub struct KeenCacheQuery<'a> {
-    query: KeenQuery<'a>,
+pub struct KeenCacheQuery {
+    query: KeenQuery,
     redis: Option<RedisClient>,
 }
 
-impl<'a> KeenCacheQuery<'a> {
+impl KeenCacheQuery {
     pub fn group_by(&mut self, g: &str) {
         self.query.group_by(g);
     }
@@ -88,17 +87,19 @@ impl<'a> KeenCacheQuery<'a> {
     pub fn other(&mut self, key: &str, value: &str) {
         self.query.other(key, value);
     }
-    pub fn data<C>(&self) -> NativeResult<KeenCacheResult<C>>
+    pub fn data<C>(&self) -> Result<KeenCacheResult<C>>
         where C: Deserialize
     {
-        info!("get data from keenio: url is :{}", self.query.url());
+        debug!("get data from keenio: url is : {}", self.query.url());
 
         let resp = try!(timeit!(self.query.data(), "get data from keen io"));
+
+        debug!("response from keenio's url is: {}", resp.url);
+
         if resp.status != StatusCode::Ok {
             let e: KeenError = try!(from_reader(resp));
-            return Err(NativeError::KeenError(e));
+            return Err(e.into());
         }
-        info!("response from keenio's url is: {}", resp.url);
 
         let connection = if let Some(ref client) = self.redis {
             Some(try!(client.get_connection()))
@@ -109,55 +110,24 @@ impl<'a> KeenCacheQuery<'a> {
         let ret = KeenCacheResult {
             data: try!(timeit!(from_reader(resp), "decode data from reader")),
             redis: connection,
-            type_tag: ResultType::POD,
         };
         Ok(ret)
     }
 }
 
-#[derive(Clone,Copy,Debug)]
-pub enum ResultType {
-    POD = 0,
-    ITEMS = 1,
-    DAYSPOD = 2,
-    DAYSITEMS = 3,
-}
-
 pub struct KeenCacheResult<C> {
-    pub type_tag: ResultType, // this is for ffi use, so it will be set in ffi module
     data: KeenResult<C>,
     redis: Option<Connection>,
 }
 
-impl KeenCacheResult<i64> {
-    pub fn tt(&mut self) {
-        self.type_tag = ResultType::POD
-    }
-}
-impl KeenCacheResult<Items> {
-    pub fn tt(&mut self) {
-        self.type_tag = ResultType::ITEMS
-    }
-}
-impl KeenCacheResult<Days<i64>> {
-    pub fn tt(&mut self) {
-        self.type_tag = ResultType::DAYSPOD
-    }
-}
-impl KeenCacheResult<Days<Items>> {
-    pub fn tt(&mut self) {
-        self.type_tag = ResultType::DAYSITEMS
-    }
-}
-
-impl<C> KeenCacheResult<C> where C: Deserialize
+impl<C> KeenCacheResult<C>
+    where C: Deserialize
 {
-    pub fn from_redis(url: &str, key: &str) -> NativeResult<KeenCacheResult<C>> {
+    pub fn from_redis(url: &str, key: &str) -> Result<KeenCacheResult<C>> {
         let c = try!(open_redis(url));
         let s: String = try!(timeit!(c.get(key), "get data from redis"));
         let result = try!(timeit!(from_str(&s), "decode data from redis"));
         Ok(KeenCacheResult {
-            type_tag: ResultType::POD,
             data: result,
             redis: None,
         })
@@ -169,12 +139,12 @@ impl<C> KeenCacheResult<Days<C>> {
         let r = KeenCacheResult {
             data: self.data.range(from, to),
             redis: self.redis,
-            type_tag: self.type_tag,
         };
         r
     }
 }
-impl<C> KeenCacheResult<C> where C: Serialize
+impl<C> KeenCacheResult<C>
+    where C: Serialize
 {
     pub fn accumulate<O>(self) -> KeenCacheResult<O>
         where KeenResult<C>: Accumulate<O>
@@ -182,7 +152,6 @@ impl<C> KeenCacheResult<C> where C: Serialize
         let r = KeenCacheResult {
             data: self.data.accumulate(),
             redis: self.redis,
-            type_tag: self.type_tag, // will be set later with *.tt()
         };
         r
     }
@@ -192,11 +161,10 @@ impl<C> KeenCacheResult<C> where C: Serialize
         let r = KeenCacheResult {
             data: self.data.select(predicate),
             redis: self.redis,
-            type_tag: self.type_tag, // will be set later with *.tt()
         };
         r
     }
-    pub fn to_redis(&self, key: &str, expire: u64) -> NativeResult<()> {
+    pub fn to_redis(&self, key: &str, expire: u64) -> Result<()> {
         let bin = try!(to_string(&self.data));
         if self.redis.is_some() {
             let _ = try!(self.redis.as_ref().unwrap().set(&key[..], bin));
@@ -207,4 +175,8 @@ impl<C> KeenCacheResult<C> where C: Serialize
     pub fn to_string(&self) -> String {
         to_string(&self.data).unwrap()
     }
+}
+
+pub fn open_redis(url: &str) -> Result<RedisClient> {
+    Ok(try!(RedisClient::open(&url[..])))
 }
