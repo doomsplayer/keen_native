@@ -313,7 +313,7 @@ pub const DAYSPOD: c_int = 2;
 pub const DAYSITEMS: c_int = 3;
 
 #[no_mangle]
-pub extern "C" fn send(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
+pub extern "C" fn send_query(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
     let r = match tp {
         POD => {
             let r: KeenCacheResult<i64> = match q.as_ref().data() {

@@ -41,7 +41,7 @@ extern "C" {
               filter_a: *const c_char,
               filter_b: *const c_char)
               -> bool;
-    fn send(q: *mut c_void, tp: c_int) -> *mut c_void;
+    fn send_query(q: *mut c_void, tp: c_int) -> *mut c_void;
     fn to_string(r: *mut c_void) -> c_char;
     fn free_result(r: *mut c_void);
     fn free_query(r: *mut c_void);
