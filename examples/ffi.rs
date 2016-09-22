@@ -67,16 +67,17 @@ fn main() {
                               cstring!("2015-12-18T20:32:36+08:00"),
                               cstring!("2015-12-19T20:32:36+08:00"));
         filter(query, GT, cstring!("pageId"), cstring!("1"));
-        filter(query, LT, cstring!("pageId"), cstring!("10000"));
+        filter(query, LT, cstring!("pageId"), cstring!("458910"));
         group_by(query, cstring!("pageId"));
-        let data = send(query, ITEMS);
+        let data = send_query(query, ITEMS);
         if data == 0 as *mut _ {
             println!("{}", cstr!(last_error()));
             return;
         }
         to_redis(data, cstring!("key123"), 123 as c_int);
 
-        free_result(data);
+        // free_result(data);
+        std::mem::forget(data);
         free_client(client);
         free_query(query);
     }

@@ -41,7 +41,7 @@ fn main() {
 
     let mut q = client.query(metric.clone(),
                              "strikingly_pageviews".into(),
-                             TimeFrame::Absolute(UTC::now() - Duration::hours(2),
+                             TimeFrame::Absolute(UTC::now() - Duration::hours(24),
                                                  UTC::now() - Duration::hours(1)));
     q.filter(Filter::gt("pageId", args.arg_from));
     q.filter(Filter::lt("pageId", args.arg_to));

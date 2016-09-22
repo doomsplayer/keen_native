@@ -186,27 +186,42 @@ impl CompressedFields {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct Item {
     result: u64,
-    #[serde(serialize_with = "serialize_compressed_fields")]
-    #[serde(deserialize_with = "deserialize_compressed_fields")]
     fields: CompressedFields,
 }
 
-fn deserialize_compressed_fields<D>(deserializer: &mut D) -> Result<CompressedFields, D::Error>
-    where D: Deserializer
-{
-    let object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
-    let fields = to_string(&object).unwrap();
-    Ok(CompressedFields(fields))
+// BTreeMap<String, StringOrI64>
+impl Deserialize for Item {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Item, D::Error>
+        where D: Deserializer
+    {
+        use serde_json::ser::to_string;
+        let mut object: BTreeMap<String, Value> = try!(Deserialize::deserialize(deserializer));
+        let result = try!(object.remove("result")
+            .and_then(|v| v.as_u64())
+            .ok_or(D::Error::missing_field("no such field: result")));
+
+        let fields = to_string(&object).unwrap();
+
+        let page = Item {
+            result: result,
+            fields: CompressedFields(fields),
+        };
+        Ok(page)
+    }
 }
 
-fn serialize_compressed_fields<S>(c: &CompressedFields, serializer: &mut S) -> Result<(), S::Error>
-    where S: Serializer
-{
-    let object: BTreeMap<String, Value> = from_str(&c.0).ok().unwrap_or_default();
-    object.serialize(serializer)
+impl Serialize for Item {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
+        use serde_json::from_str;
+        let mut object: BTreeMap<String, Value> = from_str(&self.fields.0).ok().unwrap_or_default();
+        object.insert("result".to_owned(), Value::I64(self.result as i64));
+        object.serialize(serializer)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]

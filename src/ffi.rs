@@ -51,33 +51,6 @@ impl From<KeenCacheClient> for FFICacheClient {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn new_client(key: *mut c_char, project: *mut c_char) -> FFICacheClient {
-    let key = cstr!(key);
-    let project = cstr!(project);
-    KeenCacheClient::new(key, project).into()
-}
-
-#[no_mangle]
-pub extern "C" fn set_redis(mut c: FFICacheClient, url: *mut c_char) -> bool {
-    let url = cstr!(url);
-    let result: Result<()> = c.as_mut().set_redis(url);
-    match result {
-        Ok(_) => true,
-        Err(e) => {
-            set_global_error(e);
-            false
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn set_timeout(mut c: FFICacheClient, sec: c_int) -> bool {
-    c.as_mut().set_timeout(Duration::new(sec as u64, 0));
-    true
-}
-
-
 // it is FFIBox(*mut Box<T>)
 #[repr(C)]
 pub struct FFICacheQuery(*mut Box<Any>);
@@ -104,6 +77,72 @@ impl From<KeenCacheQuery> for FFICacheQuery {
     fn from(r: KeenCacheQuery) -> Self {
         Self::new(r)
     }
+}
+
+
+// it is FFIBox(*mut Box<Option<T>>)
+#[repr(C)]
+pub struct FFICacheResult(*mut Box<Any>);
+
+impl FFICacheResult {
+    fn new<T: Any>(t: KeenCacheResult<T>) -> FFICacheResult {
+        FFICacheResult(Box::into_raw(Box::new(Box::new(Some(t)) as Box<Any>)))
+    }
+    fn null() -> FFICacheResult {
+        FFICacheResult(ptr::null_mut())
+    }
+    fn is<T: Any>(&self) -> bool {
+        (unsafe { &mut *self.0 })
+            .downcast_mut::<Option<KeenCacheResult<T>>>()
+            .is_some()
+    }
+    fn take<T: Any>(self) -> Option<KeenCacheResult<T>> {
+        (unsafe { &mut *self.0 })
+            .downcast_mut::<Option<KeenCacheResult<T>>>()
+            .map(|x| x.take().unwrap())
+    }
+}
+
+impl Drop for FFICacheResult {
+    fn drop(&mut self) {
+        unsafe { Box::from_raw(self.0) };
+        self.0 = 0 as *mut _;
+    }
+}
+
+impl<T: Any> From<KeenCacheResult<T>> for FFICacheResult {
+    fn from(r: KeenCacheResult<T>) -> Self {
+        Self::new(r)
+    }
+}
+
+
+
+// ----------------  apis
+#[no_mangle]
+pub extern "C" fn new_client(key: *mut c_char, project: *mut c_char) -> FFICacheClient {
+    let key = cstr!(key);
+    let project = cstr!(project);
+    KeenCacheClient::new(key, project).into()
+}
+
+#[no_mangle]
+pub extern "C" fn set_redis(mut c: FFICacheClient, url: *mut c_char) -> bool {
+    let url = cstr!(url);
+    let result: Result<()> = c.as_mut().set_redis(url);
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            set_global_error(e);
+            false
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn set_timeout(mut c: FFICacheClient, sec: c_int) -> bool {
+    c.as_mut().set_timeout(Duration::new(sec as u64, 0));
+    true
 }
 
 pub const COUNT: c_int = 0;
@@ -270,41 +309,6 @@ pub extern "C" fn other(mut q: FFICacheQuery, key: *mut c_char, value: *mut c_ch
     let value = cstr!(value);
     q.as_mut().other(key, value);
     true
-}
-
-// it is FFIBox(*mut Box<Option<T>>)
-#[repr(C)]
-pub struct FFICacheResult(*mut Box<Any>);
-
-impl FFICacheResult {
-    fn new<T: Any>(t: KeenCacheResult<T>) -> FFICacheResult {
-        FFICacheResult(Box::into_raw(Box::new(Box::new(Some(t)) as Box<Any>)))
-    }
-    fn null() -> FFICacheResult {
-        FFICacheResult(ptr::null_mut())
-    }
-    fn is<T: Any>(&self) -> bool {
-        (unsafe { &mut *self.0 })
-            .downcast_mut::<Option<KeenCacheResult<T>>>()
-            .is_some()
-    }
-    fn take<T: Any>(self) -> Option<KeenCacheResult<T>> {
-        (unsafe { &mut *self.0 })
-            .downcast_mut::<Option<KeenCacheResult<T>>>()
-            .map(|x| x.take().unwrap())
-    }
-}
-
-impl Drop for FFICacheResult {
-    fn drop(&mut self) {
-        unsafe { Box::from_raw(self.0) };
-    }
-}
-
-impl<T: Any> From<KeenCacheResult<T>> for FFICacheResult {
-    fn from(r: KeenCacheResult<T>) -> Self {
-        Self::new(r)
-    }
 }
 
 pub const POD: c_int = 0;
