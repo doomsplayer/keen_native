@@ -26,6 +26,8 @@ macro_rules! cstring {
 extern "C" {
     fn new_client(key: *const c_char, project: *const c_char) -> *mut c_void;
     fn set_redis(c: *mut c_void, url: *const c_char) -> bool;
+
+    fn set_timeout(c: *mut c_void, sec: c_int) -> bool;
     fn new_query(c: *mut c_void,
                  metric_type: c_int,
                  metric_target: *mut c_char,
@@ -56,6 +58,7 @@ fn main() {
         let redis = env::var("REDISCLOUD_URL").unwrap();
 
         let client = new_client(cstring!(key), cstring!(project));
+        set_timeout(client, 10);
         set_redis(client, cstring!(redis));
         let query = new_query(client,
                               COUNT,
