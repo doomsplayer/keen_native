@@ -118,7 +118,7 @@ impl<T: Any> From<KeenCacheResult<T>> for FFICacheResult {
 
 
 
-// ----------------  apis
+// ----------------  apis  -----------------
 #[no_mangle]
 pub extern "C" fn new_client(key: *mut c_char, project: *mut c_char) -> FFICacheClient {
     let key = cstr!(key);
@@ -472,23 +472,19 @@ pub extern "C" fn select(r: FFICacheResult,
         set_global_error(format!("i64 not support select").into());
         FFICacheResult::null()
     } else if r.is::<Days<Items>>() {
+        let r = r.take::<Days<Items>>().unwrap();
+        let param = (key, StringOrI64::String(value.into()));
         match to {
             DAYSITEMS => {
-                let r: KeenCacheResult<Days<Items>> = r.take::<Days<Items>>()
-                    .unwrap()
-                    .select((key, StringOrI64::String(value.into())));
+                let r: KeenCacheResult<Days<Items>> = r.select(param);
                 r.into()
             }
             POD => {
-                let r: KeenCacheResult<i64> = r.take::<Days<Items>>()
-                    .unwrap()
-                    .select((key, StringOrI64::String(value.into())));
+                let r: KeenCacheResult<i64> = r.select(param);
                 r.into()
             }
             DAYSPOD => {
-                let r: KeenCacheResult<Days<i64>> = r.take::<Days<Items>>()
-                    .unwrap()
-                    .select((key, StringOrI64::String(value.into())));
+                let r: KeenCacheResult<Days<i64>> = r.select(param);
                 r.into()
             }
             _ => {
@@ -530,6 +526,7 @@ pub extern "C" fn to_redis(r: FFICacheResult, key: *mut c_char, expire: c_int) -
     }
 }
 
+// consume
 #[no_mangle]
 pub extern "C" fn to_string(r: FFICacheResult) -> *const c_char {
     let s = if r.is::<i64>() {
@@ -551,47 +548,24 @@ pub extern "C" fn to_string(r: FFICacheResult) -> *const c_char {
 pub extern "C" fn from_redis(url: *const c_char, key: *const c_char, tp: c_int) -> FFICacheResult {
     let key = cstr!(key);
     let url = cstr!(url);
+    macro_rules! from_redis {
+        ($t: ty) => {{
+            let r: $t = match KeenCacheResult::from_redis(url, key) {
+                Ok(o) => o,
+                Err(e) => {
+                    set_global_error(e);
+                    return FFICacheResult::null();
+                }
+            };
+            r.into()
+        }}
+    }
+
     match tp {
-        POD => {
-            let r: KeenCacheResult<i64> = match KeenCacheResult::from_redis(url, key) {
-                Ok(o) => o,
-                Err(e) => {
-                    set_global_error(e);
-                    return FFICacheResult::null();
-                }
-            };
-            r.into()
-        }
-        ITEMS => {
-            let r: KeenCacheResult<Items> = match KeenCacheResult::from_redis(url, key) {
-                Ok(o) => o,
-                Err(e) => {
-                    set_global_error(e);
-                    return FFICacheResult::null();
-                }
-            };
-            r.into()
-        }
-        DAYSPOD => {
-            let r: KeenCacheResult<Days<i64>> = match KeenCacheResult::from_redis(url, key) {
-                Ok(o) => o,
-                Err(e) => {
-                    set_global_error(e);
-                    return FFICacheResult::null();
-                }
-            };
-            r.into()
-        }
-        DAYSITEMS => {
-            let r: KeenCacheResult<Days<Items>> = match KeenCacheResult::from_redis(url, key) {
-                Ok(o) => o,
-                Err(e) => {
-                    set_global_error(e);
-                    return FFICacheResult::null();
-                }
-            };
-            r.into()
-        }
+        POD => from_redis!(KeenCacheResult<i64>),
+        ITEMS => from_redis!(KeenCacheResult<Items>),
+        DAYSPOD => from_redis!(KeenCacheResult<Days<i64>>),
+        DAYSITEMS => from_redis!(KeenCacheResult<Days<Items>>),
         _ => {
             set_global_error(format!("not a valid target type '{}'", tp).into());
             FFICacheResult::null()
