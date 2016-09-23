@@ -21,5 +21,6 @@ mod ffi;
 
 #[no_mangle]
 pub use ffi::*;
-pub use client::*;
-pub use protocol::*;
+pub use client::{KeenCacheClient, KeenCacheQuery, KeenCacheResult};
+pub use protocol::{Accumulate, Days, KeenError, KeenResult, Range, Select, StringOrI64};
+pub use keen::{Filter, Interval, KeenClient, KeenQuery, Metric, TimeFrame};

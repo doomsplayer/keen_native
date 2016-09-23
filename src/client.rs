@@ -1,18 +1,15 @@
-use protocol::*;
-use errors::Result;
-use keen::*;
 use std::time::Duration;
-use serde_json::from_reader;
-use serde_json::from_str;
-use serde_json::to_string;
-use serde::Deserialize;
-use serde::Serialize;
-use chrono::UTC;
+
+use serde::{Deserialize, Serialize};
+use serde_json::{from_reader, from_str, to_string};
+
+use chrono::{DateTime, UTC};
 use hyper::status::StatusCode;
-use redis::Connection;
-use redis::Commands;
-use redis::Client as RedisClient;
-use chrono::DateTime;
+use redis::{Commands, Connection, Client as RedisClient};
+use keen::{Filter, Interval, KeenClient, KeenQuery, Metric, TimeFrame};
+
+use protocol::{Accumulate, Days, KeenError, KeenResult, Range, Select, StringOrI64};
+use errors::Result;
 
 macro_rules! timeit {
     ($e: expr, $f: expr, $t: expr) => {
@@ -177,6 +174,6 @@ impl<C> KeenCacheResult<C>
     }
 }
 
-pub fn open_redis(url: &str) -> Result<RedisClient> {
+fn open_redis(url: &str) -> Result<RedisClient> {
     Ok(try!(RedisClient::open(&url[..])))
 }
