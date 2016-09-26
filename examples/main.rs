@@ -5,7 +5,6 @@ extern crate env_logger;
 extern crate keen;
 extern crate docopt;
 
-use keen::*;
 use chrono::*;
 use std::env;
 use std::time;
