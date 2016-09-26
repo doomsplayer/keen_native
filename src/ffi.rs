@@ -317,9 +317,11 @@ pub const DAYSPOD: c_int = 2;
 pub const DAYSITEMS: c_int = 3;
 
 #[no_mangle]
-pub extern "C" fn send_query(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
-    let r = match tp {
-        POD => {
+pub extern "C" fn send_query(q: FFICacheQuery) -> FFICacheResult {
+    use ::client::ResultType;
+
+    let r = match q.as_ref().tp {
+        ResultType::POD => {
             let r: KeenCacheResult<i64> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
@@ -330,7 +332,7 @@ pub extern "C" fn send_query(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
             };
             r.into()
         }
-        ITEMS => {
+        ResultType::Items => {
             let r: KeenCacheResult<Items> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
@@ -341,7 +343,7 @@ pub extern "C" fn send_query(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
             };
             r.into()
         }
-        DAYSPOD => {
+        ResultType::DaysPOD => {
             let r: KeenCacheResult<Days<i64>> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
@@ -353,7 +355,7 @@ pub extern "C" fn send_query(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
             };
             r.into()
         }
-        DAYSITEMS => {
+        ResultType::DaysItems => {
             let r: KeenCacheResult<Days<Items>> = match q.as_ref().data() {
                 Ok(s) => s,
                 Err(e) => {
@@ -366,10 +368,6 @@ pub extern "C" fn send_query(q: FFICacheQuery, tp: c_int) -> FFICacheResult {
                 }
             };
             r.into()
-        }
-        _ => {
-            set_global_error(format!("unsupported type: '{}'", tp).into());
-            return FFICacheResult::null();
         }
     };
     r

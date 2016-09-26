@@ -59,24 +59,48 @@ impl KeenCacheClient {
         KeenCacheQuery {
             query: self.client.query(metric, collection, timeframe),
             redis: self.redis.clone(),
+            tp: ResultType::POD,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub enum ResultType {
+    POD,
+    Items,
+    DaysPOD,
+    DaysItems,
 }
 
 pub struct KeenCacheQuery {
     query: KeenQuery,
     redis: Option<RedisClient>,
+    pub tp: ResultType,
 }
 
 impl KeenCacheQuery {
     pub fn group_by(&mut self, g: &str) {
+        use self::ResultType::*;
+
         self.query.group_by(g);
+        self.tp = match self.tp {
+            POD => Items,
+            DaysPOD => DaysItems,
+            o => o,
+        }
     }
     pub fn filter(&mut self, f: Filter) {
         self.query.filter(f);
     }
     pub fn interval(&mut self, i: Interval) {
+        use self::ResultType::*;
+
         self.query.interval(i);
+        self.tp = match self.tp {
+            POD => DaysPOD,
+            Items => DaysItems,
+            o => o,
+        }
     }
     pub fn max_age(&mut self, age: usize) {
         self.query.max_age(age);
