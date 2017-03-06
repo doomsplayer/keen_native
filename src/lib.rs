@@ -1,5 +1,7 @@
 extern crate hyper;
 extern crate chrono;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_json;
 extern crate serde;
 extern crate libc;

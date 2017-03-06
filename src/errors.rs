@@ -7,11 +7,11 @@ error_chain! {
     //
     // This section can be empty.
     foreign_links {
-        ::serde_json::error::Error, JsonError;
-        ::redis::RedisError, RedisError;
-        ::chrono::ParseError, ChronoError;
-        ::hyper::error::Error, HyperError;
-        ::protocol::KeenError, KeenError;
+        JsonError(::serde_json::error::Error);
+        RedisError(::redis::RedisError);
+        ChronoError(::chrono::ParseError);
+        HyperError(::hyper::error::Error);
+        KeenError(::protocol::KeenError);
     }
 
     // Define additional `ErrorKind` variants. The syntax here is

@@ -1,31 +1,28 @@
 [package]
 name = "keenio-batch"
-version = "0.3.0"
-authors = ["Wu Young <doomsplayer@gmail.com>"]
-build = "build.rs"
+version = "0.4.0"
+authors = ["Young Wu <doomsplayer@gmail.com>"]
 
 [dependencies]
-hyper = "^0.9"
-chrono = "^0.2"
-serde_json = "^0.8.0"
-serde = "^0.8.0"
-redis = "^0.7"
-itertools = "^0.4"
-error-chain = "^0.5"
-keen = "^1.3.0"
-regex = "^0.1"
+hyper = "0.10"
+chrono = "0.3"
+serde_json = "0.9"
+serde_derive = "0.9"
+serde = "0.9"
+redis = "0.8"
+itertools = "0.5"
+error-chain = "0.10"
+keen = "1.4.0"
+regex = "0.2"
 lazy_static = "^0.2"
 log = "^0.3"
 env_logger = "^0.3"
 libc = "^0.2"
 dotenv = "^0.8"
 
-[build-dependencies]
-serde_codegen = "0.8"
-
 [dev-dependencies]
-rustc-serialize = "*"
-docopt = "*"
+structopt = "0.0.3"
+structopt-derive = "0.0.3"
 
 [lib]
 path = "src/lib.rs"

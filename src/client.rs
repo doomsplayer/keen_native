@@ -16,7 +16,7 @@ macro_rules! timeit {
         {
             let t = UTC::now();
             let result = $e;
-            if $t { info!("keen native: {} :{}", $f, UTC::now() - t) }
+            if $t { info!("keen native: {} :{}", $f, UTC::now().signed_duration_since(t)) }
             result
         }
     };
@@ -24,7 +24,7 @@ macro_rules! timeit {
         {
             let t = UTC::now();
             let result = $e;
-            info!("{} :{}", $f, UTC::now() - t);
+            info!("{} :{}", $f, UTC::now().signed_duration_since(t));
             result
         }
     };
@@ -188,8 +188,8 @@ impl<C> KeenCacheResult<C>
     pub fn to_redis(&self, key: &str, expire: u64) -> Result<()> {
         let bin = try!(to_string(&self.data));
         if self.redis.is_some() {
-            let _ = try!(self.redis.as_ref().unwrap().set(&key[..], bin));
-            let _ = try!(self.redis.as_ref().unwrap().expire(&key[..], expire as usize));
+            let _: () = self.redis.as_ref().unwrap().set(&key[..], bin)?;
+            let _: () = self.redis.as_ref().unwrap().expire(&key[..], expire as usize)?;
         }
         Ok(())
     }

@@ -1,31 +1,26 @@
-extern crate rustc_serialize;
 extern crate keenio_batch as booster;
 extern crate chrono;
 extern crate env_logger;
 extern crate keen;
-extern crate docopt;
+#[macro_use]
+extern crate structopt_derive;
+extern crate structopt;
+
+use structopt::StructOpt;
 
 use chrono::*;
 use std::env;
 use std::time;
 use booster::*;
 
-static USAGE: &'static str = "
-Usage:
-  main <from> <to>
-";
-
-#[derive(Debug, RustcDecodable)]
+#[derive(StructOpt, Clone, Debug)]
 struct Args {
-    arg_from: i64,
-    arg_to: i64,
+    from: i64,
+    to: i64,
 }
 
 fn main() {
-    let args: Args = docopt::Docopt::new(USAGE)
-        .and_then(|d| d.decode())
-        .unwrap_or_else(|e| e.exit());
-
+    let args = Args::from_args();
 
     let _ = env_logger::init().unwrap();
 
@@ -42,8 +37,8 @@ fn main() {
                              "strikingly_pageviews".into(),
                              TimeFrame::Absolute(UTC::now() - Duration::hours(24),
                                                  UTC::now() - Duration::hours(1)));
-    q.filter(Filter::gt("pageId", args.arg_from));
-    q.filter(Filter::lt("pageId", args.arg_to));
+    q.filter(Filter::gt("pageId", args.from));
+    q.filter(Filter::lt("pageId", args.to));
     q.group_by("normalized_referrer");
     q.group_by("ip_geo_info.country");
     q.group_by("parsed_user_agent.os.family");
