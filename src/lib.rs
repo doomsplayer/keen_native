@@ -17,7 +17,7 @@ extern crate log;
 
 #[macro_use]
 mod client;
-mod errors;
+pub mod errors;
 mod protocol;
 mod ffi;
 
