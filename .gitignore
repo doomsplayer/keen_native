@@ -1,3 +1,8 @@
 target
 Cargo.lock
 .DS_Store
+examples/bench_elixir
+examples/dump.json
+examples/python.py
+examples/ruby.rb
+examples/rust.rs

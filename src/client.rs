@@ -144,10 +144,18 @@ pub struct KeenCacheResult<C> {
 impl<C> KeenCacheResult<C>
     where C: Deserialize
 {
+    pub fn from_str(payload: &str) -> Result<KeenCacheResult<C>> {
+        let result = timeit!(from_str(&payload), "decode data from redis")?;
+        Ok(KeenCacheResult {
+            data: result,
+            redis: None,
+        })
+    }
+
     pub fn from_redis(url: &str, key: &str) -> Result<KeenCacheResult<C>> {
-        let c = try!(open_redis(url));
-        let s: String = try!(timeit!(c.get(key), "get data from redis"));
-        let result = try!(timeit!(from_str(&s), "decode data from redis"));
+        let c = open_redis(url)?;
+        let s: String = timeit!(c.get(key), "get data from redis")?;
+        let result = timeit!(from_str(&s), "decode data from redis")?;
         Ok(KeenCacheResult {
             data: result,
             redis: None,
@@ -176,8 +184,9 @@ impl<C> KeenCacheResult<C>
         };
         r
     }
-    pub fn select<O>(self, predicate: (&str, StringOrI64)) -> KeenCacheResult<O>
-        where KeenResult<C>: Select<O>
+    pub fn select<O, I>(self, predicate: (&str, I)) -> KeenCacheResult<O>
+        where KeenResult<C>: Select<O>,
+              I: Into<StringOrI64>
     {
         let r = KeenCacheResult {
             data: self.data.select(predicate),

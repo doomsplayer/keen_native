@@ -28,7 +28,7 @@ pub struct Day<V> {
     timeframe: Timeframe,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone, From)]
 pub enum StringOrI64 {
     String(String),
     I64(i64),
@@ -307,15 +307,19 @@ impl Accumulate<i64> for KeenResult<Days<Items>> {
 }
 
 pub trait Select<O> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<O>;
+    fn select<I>(self, predicate: (&str, I)) -> KeenResult<O> where I: Into<StringOrI64>;
 }
 
 impl Select<i64> for KeenResult<Items> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
+    fn select<I>(self, predicate: (&str, I)) -> KeenResult<i64>
+        where I: Into<StringOrI64>
+    {
+        let key = predicate.0;
+        let value = predicate.1.into();
         let ret = self.result
             .0
             .into_iter()
-            .find(|i| i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false))
+            .find(|i| i.fields.get(key).map(|v| v == value).unwrap_or(false))
             .map(|i| i.result)
             .unwrap_or(0);
         KeenResult { result: ret as i64 }
@@ -323,23 +327,32 @@ impl Select<i64> for KeenResult<Items> {
 }
 
 impl Select<Items> for KeenResult<Items> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<Items> {
+    fn select<I>(self, predicate: (&str, I)) -> KeenResult<Items>
+        where I: Into<StringOrI64>
+    {
+        let key = predicate.0;
+        let value = predicate.1.into();
         let ret: Vec<_> = self.result
             .0
             .into_iter()
-            .filter(|i| i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false))
+            .filter(|i| i.fields.get(key).map(|v| v == value).unwrap_or(false))
             .collect();
         KeenResult { result: Items(ret) }
     }
 }
 
 impl Select<i64> for KeenResult<Days<Items>> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<i64> {
+    fn select<I>(self, predicate: (&str, I)) -> KeenResult<i64>
+        where I: Into<StringOrI64>
+    {
+        let key = predicate.0;
+        let value = predicate.1.into();
+
         let mut sum = 0;
         for day in &self.result {
             sum += day.value
                 .iter()
-                .find(|i| i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false))
+                .find(|i| i.fields.get(key).map(|v| v == value).unwrap_or(false))
                 .map(|i| i.result as i64)
                 .unwrap_or(0);
         }
@@ -348,13 +361,16 @@ impl Select<i64> for KeenResult<Days<Items>> {
 }
 
 impl Select<Days<Items>> for KeenResult<Days<Items>> {
-    fn select(mut self, predicate: (&str, StringOrI64)) -> KeenResult<Days<Items>> {
+    fn select<I>(mut self, predicate: (&str, I)) -> KeenResult<Days<Items>>
+        where I: Into<StringOrI64>
+    {
+        let key = predicate.0;
+        let value = predicate.1.into();
         for day in &mut self.result {
-            day.value.retain(|item| {
-                item.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
-            });
+            day.value
+                .retain(|item| item.fields.get(key).map(|v| v == value).unwrap_or(false));
             for item in &mut day.value.0 {
-                item.fields.remove(predicate.0);
+                item.fields.remove(key);
             }
         }
         self
@@ -362,16 +378,18 @@ impl Select<Days<Items>> for KeenResult<Days<Items>> {
 }
 
 impl Select<Days<i64>> for KeenResult<Days<Items>> {
-    fn select(self, predicate: (&str, StringOrI64)) -> KeenResult<Days<i64>> {
+    fn select<I>(self, predicate: (&str, I)) -> KeenResult<Days<i64>>
+        where I: Into<StringOrI64>
+    {
+        let key = predicate.0;
+        let value = predicate.1.into();
         KeenResult {
             result: self.result
                 .into_iter()
                 .map(|day| {
                     let v = day.value
                         .iter()
-                        .find(|i| {
-                            i.fields.get(predicate.0).map(|v| v == predicate.1).unwrap_or(false)
-                        })
+                        .find(|i| i.fields.get(key).map(|v| v == value).unwrap_or(false))
                         .map(|i| i.result as i64)
                         .unwrap_or(0);
                     Day {
